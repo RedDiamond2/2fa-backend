@@ -1,72 +1,60 @@
 from flask import Flask, request, jsonify
-import random, time
+from flask_cors import CORS
+import random, time, hashlib
+import requests
 
 app = Flask(__name__)
+CORS(app)
 
-# تخزين OTP ووقت الانتهاء وعدد المحاولات
-otp_store = {}        # email -> {"otp": str, "expires": timestamp}
-attempts_store = {}   # email -> int
-last_sent = {}        # email -> timestamp
+otp_store = {}
 
-OTP_EXPIRY = 300      # 5 دقائق
-SEND_COOLDOWN = 60    # 1 دقيقة بين كل إرسال
-MAX_ATTEMPTS = 5
+RESEND_API_KEY = "re_Q1ohZ7ic_PNgnrB8nuLd7fBniA5xF5Kd8"  # ضع مفتاحك هنا
 
-def generate_otp():
-    return str(random.randint(100000, 999999))
+def hash_otp(otp):
+    return hashlib.sha256(otp.encode()).hexdigest()
+
+def send_email(to_email, otp):
+    res = requests.post(
+        "https://api.resend.com/emails",
+        headers={
+            "Authorization": f"Bearer {RESEND_API_KEY}",
+            "Content-Type": "application/json"
+        },
+        json={
+            "from": "onboarding@resend.dev",
+            "to": [to_email],
+            "subject": "Your OTP Code",
+            "html": f"<h2>Your OTP is: {otp}</h2>"
+        }
+    )
+    print("Email sent:", res.status_code, res.text)
 
 @app.route("/send-otp", methods=["POST"])
 def send_otp():
-    data = request.get_json()
-    email = data.get("email")
-    now = time.time()
-
-    if not email:
-        return jsonify({"success": False, "error": "Email required"}), 400
-
-    # منع السبام
-    if email in last_sent and now - last_sent[email] < SEND_COOLDOWN:
-        wait = int(SEND_COOLDOWN - (now - last_sent[email]))
-        return jsonify({"success": False, "error": f"Wait {wait}s before retry"}), 429
-
-    code = generate_otp()
-    otp_store[email] = {"otp": code, "expires": now + OTP_EXPIRY}
-    attempts_store[email] = 0
-    last_sent[email] = now
-
-    # هنا مكان إرسال الإيميل الحقيقي، حالياً مجرد debug
-    print(f"[DEBUG] OTP for {email}: {code}")
-
+    email = request.json.get("email")
+    otp = str(random.randint(100000, 999999))
+    otp_store[email] = {
+        "otp": hash_otp(otp),
+        "exp": time.time() + 300
+    }
+    send_email(email, otp)
     return jsonify({"success": True})
 
 @app.route("/verify-otp", methods=["POST"])
 def verify_otp():
-    data = request.get_json()
-    email = data.get("email")
-    otp = data.get("otp")
-    now = time.time()
+    email = request.json.get("email")
+    otp = request.json.get("otp")
+    data = otp_store.get(email)
 
-    if not email or not otp:
-        return jsonify({"success": False, "error": "Email and OTP required"}), 400
+    if not data:
+        return jsonify({"error": "No OTP"}), 400
+    if time.time() > data["exp"]:
+        return jsonify({"error": "Expired"}), 400
+    if data["otp"] != hash_otp(otp):
+        return jsonify({"error": "Wrong OTP"}), 400
 
-    if email not in otp_store:
-        return jsonify({"success": False, "error": "No OTP sent"}), 400
-
-    if now > otp_store[email]["expires"]:
-        del otp_store[email]
-        return jsonify({"success": False, "error": "OTP expired"}), 400
-
-    # عدد المحاولات
-    attempts_store[email] += 1
-    if attempts_store[email] > MAX_ATTEMPTS:
-        return jsonify({"success": False, "error": "Too many attempts"}), 429
-
-    if otp == otp_store[email]["otp"]:
-        del otp_store[email]
-        del attempts_store[email]
-        return jsonify({"success": True})
-
-    return jsonify({"success": False, "error": "Invalid OTP"}), 400
+    del otp_store[email]
+    return jsonify({"success": True})
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=8000, debug=True)
+    app.run(debug=True)
