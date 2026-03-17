@@ -6,56 +6,116 @@ from email.mime.text import MIMEText
 app = Flask(__name__)
 CORS(app)
 
+# تخزين مؤقت (في الإنتاج استعمل Redis أو DB)
 otp_store = {}
+rate_limit = {}
 
+# ✏️ عدل هذه البيانات
 EMAIL = "ip8a2024@gmail.com"
 PASSWORD = "lfyr mkds gioy ltlu"
 
+
+# 🔐 توليد OTP
+def generate_otp():
+    return str(random.randint(100000, 999999))
+
+
+# 🔐 تشفير OTP
 def hash_otp(otp):
     return hashlib.sha256(otp.encode()).hexdigest()
 
+
+# 📧 إرسال الإيميل
 def send_email(to_email, otp):
-    msg = MIMEText(f"Your OTP is: {otp}")
-    msg["Subject"] = "Your Login Code"
-    msg["From"] = EMAIL
-    msg["To"] = to_email
+    try:
+        msg = MIMEText(f"Your OTP code is: {otp}\nValid for 5 minutes.")
+        msg["Subject"] = "Your 2FA Code"
+        msg["From"] = EMAIL
+        msg["To"] = to_email
 
-    server = smtplib.SMTP_SSL("smtp.gmail.com", 465)
-    server.login(EMAIL, PASSWORD)
-    server.send_message(msg)
-    server.quit()
+        server = smtplib.SMTP_SSL("smtp.gmail.com", 465)
+        server.login(EMAIL, PASSWORD)
+        server.send_message(msg)
+        server.quit()
+        return True
+    except Exception as e:
+        print("Email Error:", e)
+        return False
 
+
+# 🟢 اختبار السيرفر
+@app.route("/")
+def home():
+    return "2FA API Working ✅"
+
+
+# 🚀 إرسال OTP
 @app.route("/send-otp", methods=["POST"])
 def send_otp():
-    email = request.json.get("email")
+    data = request.json
+    email = data.get("email")
+    ip = request.remote_addr
 
-    otp = str(random.randint(100000, 999999))
+    if not email:
+        return jsonify({"error": "Email required"}), 400
+
+    # 🔒 Rate limit (كل 60 ثانية)
+    last_request = rate_limit.get(ip, 0)
+    if time.time() - last_request < 60:
+        return jsonify({"error": "Too many requests"}), 429
+
+    rate_limit[ip] = time.time()
+
+    otp = generate_otp()
 
     otp_store[email] = {
         "otp": hash_otp(otp),
-        "exp": time.time() + 300
+        "exp": time.time() + 300,  # 5 دقائق
+        "attempts": 0
     }
 
-    send_email(email, otp)
+    if not send_email(email, otp):
+        return jsonify({"error": "Failed to send email"}), 500
 
     return jsonify({"success": True})
 
+
+# 🔍 التحقق من OTP
 @app.route("/verify-otp", methods=["POST"])
 def verify_otp():
-    email = request.json.get("email")
-    otp = request.json.get("otp")
+    data = request.json
+    email = data.get("email")
+    otp = data.get("otp")
 
-    data = otp_store.get(email)
+    record = otp_store.get(email)
 
-    if not data:
-        return jsonify({"error": "No OTP"}), 400
+    if not record:
+        return jsonify({"error": "No OTP found"}), 400
 
-    if time.time() > data["exp"]:
-        return jsonify({"error": "Expired"}), 400
+    # ⏰ انتهت الصلاحية
+    if time.time() > record["exp"]:
+        del otp_store[email]
+        return jsonify({"error": "OTP expired"}), 400
 
-    if data["otp"] != hash_otp(otp):
-        return jsonify({"error": "Wrong OTP"}), 400
+    # 🔒 عدد المحاولات
+    record["attempts"] += 1
+    if record["attempts"] > 5:
+        del otp_store[email]
+        return jsonify({"error": "Too many attempts"}), 403
 
+    # ❌ كود خاطئ
+    if record["otp"] != hash_otp(otp):
+        return jsonify({"error": "Invalid OTP"}), 400
+
+    # ✅ نجاح
     del otp_store[email]
 
-    return jsonify({"success": True})
+    return jsonify({
+        "success": True,
+        "message": "Authentication successful"
+    })
+
+
+# 🚀 تشغيل السيرفر
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=10000)
