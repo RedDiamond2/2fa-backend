@@ -1,16 +1,19 @@
 from flask import Flask, request, jsonify
 from flask_cors import CORS
-import random, time, hashlib, smtplib, threading
+import random, time, hashlib, smtplib, threading, os
 from email.mime.text import MIMEText
 
 app = Flask(__name__)
 CORS(app)
 
 # ================================
-# إعداد Gmail (⚠️ ضع بياناتك)
+# إعداد Gmail (آمن)
 # ================================
 GMAIL_USER = "ip8a2024@gmail.com"
-GMAIL_PASS = "lfyr mkds gioy ltlu"
+GMAIL_PASS = os.environ.get("GMAIL_PASS")
+
+if not GMAIL_PASS:
+    raise Exception("GMAIL_PASS not set in environment variables")
 
 # ================================
 # تخزين OTP
@@ -43,11 +46,15 @@ def send_email(to_email, otp):
     except Exception as e:
         print("[ERROR]", e)
 
+# ================================
+# تنظيف OTP المنتهية
+# ================================
 def cleanup():
     now = time.time()
     for email in list(otp_store.keys()):
         if now > otp_store[email]["exp"]:
             del otp_store[email]
+
     threading.Timer(60, cleanup).start()
 
 cleanup()
@@ -59,16 +66,19 @@ cleanup()
 def ping():
     return "pong"
 
+# ================================
+# إرسال OTP (مقفل على إيميل واحد)
+# ================================
 @app.route("/send-otp", methods=["POST"])
 def send_otp():
     data = request.json
-    email = data.get("email")
 
-    if not email or "@" not in email:
-        return jsonify({"error": "Invalid email"}), 400
+    # 🔒 إرسال فقط لهذا الإيميل
+    email = "ip8a2024@gmail.com"
 
-    # 🔥 Rate limit (30 ثانية)
     now = time.time()
+
+    # ⛔ Rate limit (30 ثانية)
     if email in rate_limit and now - rate_limit[email] < 30:
         return jsonify({"error": "Wait before retry"}), 429
 
@@ -78,17 +88,24 @@ def send_otp():
 
     otp_store[email] = {
         "otp": hash_otp(otp),
-        "exp": now + 300
+        "exp": now + 300  # 5 دقائق
     }
 
     threading.Thread(target=send_email, args=(email, otp), daemon=True).start()
 
-    return jsonify({"success": True})
+    return jsonify({
+        "success": True,
+        "sent_to": email
+    })
 
+# ================================
+# التحقق من OTP
+# ================================
 @app.route("/verify-otp", methods=["POST"])
 def verify_otp():
     data = request.json
-    email = data.get("email")
+
+    email = "ip8a2024@gmail.com"  # 🔒 ثابت
     otp = data.get("otp")
 
     if email not in otp_store:
@@ -104,6 +121,7 @@ def verify_otp():
         return jsonify({"error": "Wrong OTP"}), 400
 
     del otp_store[email]
+
     return jsonify({"success": True})
 
 # ================================
