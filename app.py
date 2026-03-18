@@ -9,7 +9,7 @@ CORS(app)
 # ================================
 # إعداد Gmail (آمن)
 # ================================
-GMAIL_USER = "ip8a2024@gmail.com"
+GMAIL_USER = "ip8f2024@gmail.com"
 GMAIL_PASS = os.environ.get("GMAIL_PASS")
 
 if not GMAIL_PASS:
