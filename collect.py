@@ -14,12 +14,11 @@ collection = db.fingerprints
 
 @collect_api.route("/collect", methods=["POST"])
 def collect():
-
     data = request.json
     if not data:
         return jsonify({"status": "error", "message": "No data"}), 400
 
-    # إنشاء fingerprint hash
+    # إنشاء fingerprint hash ثابت لكل مجموعة البيانات
     data_string = str(sorted(data.items()))
     fingerprint_hash = hashlib.sha256(data_string.encode()).hexdigest()[:16]
 
