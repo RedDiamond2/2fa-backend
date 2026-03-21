@@ -1,14 +1,23 @@
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 import requests
+import os
 
 app = Flask(__name__)
 CORS(app)
 
-API_TOKEN = "86|8oqIuj6JBVKxqFM8lm4zYUSNerhtr6n6b3bzOda28fb1f382"
+# ضع التوكن في Environment Variable في Render
+API_TOKEN = os.getenv("86|8oqIuj6JBVKxqFM8lm4zYUSNerhtr6n6b3bzOda28fb1f382")
+
+
+@app.route("/")
+def home():
+    return "Email verification API running"
+
 
 @app.route("/check-email", methods=["POST"])
 def check_email():
+
     data = request.json
     email = data.get("email")
 
@@ -16,6 +25,7 @@ def check_email():
         return jsonify({"error": "Email required"}), 400
 
     try:
+
         r = requests.get(
             "https://easyemailapi.com/api/v1/verify",
             params={"email": email},
@@ -24,10 +34,13 @@ def check_email():
 
         result = r.json()
 
-        if result.get("valid"):
+        # النتيجة من API
+        if result.get("valid") == True:
+
             return jsonify({
                 "success": True,
-                "email": email
+                "email": email,
+                "message": "Email exists"
             })
 
         return jsonify({
@@ -40,4 +53,4 @@ def check_email():
 
 
 if __name__ == "__main__":
-    app.run(port=5000)
+    app.run(host="0.0.0.0", port=10000)
