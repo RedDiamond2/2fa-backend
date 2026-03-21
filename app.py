@@ -7,7 +7,7 @@ app = Flask(__name__)
 CORS(app)
 
 # ضع التوكن في Environment Variable في Render
-API_TOKEN = os.getenv("86|8oqIuj6JBVKxqFM8lm4zYUSNerhtr6n6b3bzOda28fb1f382")
+API_TOKEN = os.getenv("EMAIL_API_TOKEN")
 
 
 @app.route("/")
