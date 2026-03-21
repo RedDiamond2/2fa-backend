@@ -2,8 +2,8 @@ import os
 import json
 from flask import Flask, request, jsonify
 from flask_cors import CORS
-import requests
 from collect import collect_api
+import requests
 
 # إنشاء التطبيق
 app = Flask(__name__)
