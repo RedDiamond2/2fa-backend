@@ -52,6 +52,11 @@ def check_email():
     except requests.exceptions.RequestException:
         return jsonify({"success": False, "message": "فشل التحقق من البريد"}), 500
 
+# Route للحفاظ على النشاط (Keep-Alive)
+@app.route("/health")
+def health():
+    return "OK", 200
+
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port)
