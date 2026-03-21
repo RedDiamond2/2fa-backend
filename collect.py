@@ -10,7 +10,7 @@ collect_api = Blueprint("collect_api", __name__)
 MONGO_URI = os.environ.get("MONGO_URI")  # ضع رابط MongoDB هنا كـ env variable
 client = MongoClient(MONGO_URI)
 db = client.red_diamond
-collection = db.fingerprints
+collection = db.f
 
 @collect_api.route("/collect", methods=["POST"])
 def collect():
