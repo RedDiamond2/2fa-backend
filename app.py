@@ -10,7 +10,7 @@ API_KEY = os.environ.get("API_KEY")  # ضع مفتاح EasyEmailAPI في Environ
 
 # أفضل 50 مزود بريد عالمي (نطاقات)
 ALLOWED_DOMAINS = [
-    "gmail.com","yahoo.com","outlook.com","hotmail.com","protonmail.com","icloud.com",
+    "yahoo.com","outlook.com","hotmail.com","protonmail.com","icloud.com",
     "zoho.com","aol.com","gmx.com","mail.com","yandex.com","fastmail.com","tutanota.com",
     "inbox.com","hushmail.com","mail.ru","lycos.com","rambler.ru","posteo.de","runbox.com",
     "gmx.net","rediffmail.com","excite.com","mailfence.com","luxsci.com","lavabit.com",
