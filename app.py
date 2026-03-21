@@ -8,7 +8,7 @@ CORS(app)
 
 API_KEY = os.environ.get("API_KEY")  # ضع مفتاح EasyEmailAPI في Environment Variables
 
-# قائمة أفضل 50 مزود بريد عالميًا (النطاقات فقط)
+# أفضل 50 مزود بريد عالمي (نطاقات)
 ALLOWED_DOMAINS = [
     "gmail.com","yahoo.com","outlook.com","hotmail.com","protonmail.com","icloud.com",
     "zoho.com","aol.com","gmx.com","mail.com","yandex.com","fastmail.com","tutanota.com",
@@ -20,16 +20,53 @@ ALLOWED_DOMAINS = [
     "seznam.cz","web.de","terra.com","zoho.workplace","fastmail.business"
 ]
 
+# ترجمات متعدد اللغات
+translations = {
+    "ar": {
+        "no_email": "لم يتم إدخال البريد",
+        "unsupported": "هذا البريد غير مدعوم ❌",
+        "disposable": "هذا بريد مؤقت ❌ الرجاء استخدام بريد حقيقي",
+        "low_score": "موثوقية البريد ضعيفة ⚠️ الرجاء استخدام بريد آخر",
+        "invalid_mx": "خادم البريد غير صالح",
+        "valid": "الإيميل صالح ويمكن استخدامه ✅",
+        "fail": "فشل التحقق من البريد"
+    },
+    "en": {
+        "no_email": "No email provided",
+        "unsupported": "This email is not supported ❌",
+        "disposable": "This is a disposable email ❌ Please use a real email",
+        "low_score": "Email reliability is low ⚠️ Please use another email",
+        "invalid_mx": "Invalid email server",
+        "valid": "Email is valid ✅",
+        "fail": "Failed to verify email"
+    },
+    "fr": {
+        "no_email": "Aucun email fourni",
+        "unsupported": "Cet email n'est pas pris en charge ❌",
+        "disposable": "Ceci est un email temporaire ❌ Veuillez utiliser un email réel",
+        "low_score": "Fiabilité de l'email faible ⚠️ Veuillez utiliser un autre email",
+        "invalid_mx": "Serveur email invalide",
+        "valid": "L'email est valide ✅",
+        "fail": "Échec de la vérification de l'email"
+    }
+}
+
+def get_translation(lang_code: str, key: str) -> str:
+    return translations.get(lang_code, translations["ar"]).get(key, key)
+
 @app.route("/check-email", methods=["POST"])
 def check_email():
     data = request.json
     email = data.get("email")
+    lang = data.get("lang", "ar")  # اللغة المرسلة من الواجهة
+    t = translations.get(lang, translations["ar"])
+
     if not email:
-        return jsonify({"success": False, "message": "لم يتم إدخال البريد"}), 400
+        return jsonify({"success": False, "message": t["no_email"]}), 400
 
     domain = email.split("@")[-1].lower()
     if domain not in ALLOWED_DOMAINS:
-        return jsonify({"success": False, "message": "هذا البريد غير مدعوم ❌"}), 400
+        return jsonify({"success": False, "message": t["unsupported"]}), 400
 
     url = f"https://easyemailapi.com/api/verify/{email}"
     headers = {"Authorization": f"Bearer {API_KEY}"}
@@ -39,18 +76,18 @@ def check_email():
         result = r.json()
 
         if result.get("disposable"):
-            return jsonify({"success": False, "message": "هذا بريد مؤقت ❌ الرجاء استخدام بريد حقيقي"})
+            return jsonify({"success": False, "message": t["disposable"]})
 
         if result.get("score", 0) < 60:
-            return jsonify({"success": False, "message": "موثوقية البريد ضعيفة ⚠️ الرجاء استخدام بريد آخر"})
+            return jsonify({"success": False, "message": t["low_score"]})
 
         if not result.get("valid_mx", False):
-            return jsonify({"success": False, "message": "خادم البريد غير صالح"})
+            return jsonify({"success": False, "message": t["invalid_mx"]})
 
-        return jsonify({"success": True, "message": "الإيميل صالح ويمكن استخدامه ✅"})
+        return jsonify({"success": True, "message": t["valid"]})
 
     except requests.exceptions.RequestException:
-        return jsonify({"success": False, "message": "فشل التحقق من البريد"}), 500
+        return jsonify({"success": False, "message": t["fail"]}), 500
 
 # Route للحفاظ على النشاط (Keep-Alive)
 @app.route("/health")
