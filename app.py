@@ -1,4 +1,5 @@
 import os
+import json
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 import requests
@@ -135,6 +136,19 @@ def check_email():
 @app.route("/health")
 def health():
     return "OK", 200
+
+
+@app.route("/fingerprints", methods=["GET"])
+def list_fingerprints():
+
+    folder = "fingerprints"
+
+    if not os.path.exists(folder):
+        return jsonify([])
+
+    files = os.listdir(folder)
+
+    return jsonify(files)
 
 
 if __name__ == "__main__":
