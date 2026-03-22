@@ -5,24 +5,35 @@ import requests
 from collect import collect_api
 from pymongo import MongoClient
 from google_oauth import google_api
-app.register_blueprint(google_api)
 
+# =======================
+# إنشاء تطبيق Flask
+# =======================
 app = Flask(__name__)
 CORS(app)
 
-# تسجيل API جمع البيانات
-app.register_blueprint(collect_api)
+# =======================
+# تسجيل Blueprints
+# =======================
+app.register_blueprint(google_api)   # Google OAuth
+app.register_blueprint(collect_api)  # جمع البيانات
 
+# =======================
 # Environment Variables
+# =======================
 API_KEY = os.environ.get("API_KEY")           # EasyEmailAPI Key
 MONGO_URI = os.environ.get("MONGO_URI")       # MongoDB Atlas URI
 
+# =======================
 # إعداد MongoDB
+# =======================
 client = MongoClient(MONGO_URI)
 db = client.red_diamond
 collection = db.fingerprints
 
+# =======================
 # أفضل 50 مزود بريد عالمي
+# =======================
 ALLOWED_DOMAINS = [
     "yahoo.com","outlook.com","hotmail.com","protonmail.com","icloud.com",
     "zoho.com","aol.com","gmx.com","mail.com","yandex.com","fastmail.com","tutanota.com",
@@ -34,7 +45,9 @@ ALLOWED_DOMAINS = [
     "seznam.cz","web.de","terra.com","zoho.workplace","fastmail.business"
 ]
 
+# =======================
 # الترجمات
+# =======================
 translations = {
     "ar": {
         "no_email": "لم يتم إدخال البريد",
