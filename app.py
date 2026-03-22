@@ -5,6 +5,7 @@ import requests
 from collect import collect_api
 from pymongo import MongoClient
 from google_oauth import google_api
+app.register_blueprint(google_api)
 
 app = Flask(__name__)
 CORS(app)
