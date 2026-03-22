@@ -1,3 +1,4 @@
+#https://github.com/RedDiamond2/2fa-backend/blob/main/app.py
 import os
 from flask import Flask, request, jsonify
 from flask_cors import CORS
