@@ -1,3 +1,4 @@
+#https://github.com/RedDiamond2/2fa-backend/edit/main/google_oauth.py
 import os
 from flask import Blueprint, request, jsonify
 import requests, time
