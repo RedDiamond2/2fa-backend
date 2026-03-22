@@ -1,3 +1,4 @@
+#https://github.com/RedDiamond2/2fa-backend/edit/main/collect.py
 from flask import Blueprint, request, jsonify
 import hashlib
 import datetime
