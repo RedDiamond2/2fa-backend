@@ -1,8 +1,6 @@
-# google_oauth.py
 import os
 from flask import Blueprint, request, jsonify
-import requests
-import time
+import requests, time
 
 google_api = Blueprint("google_api", __name__)
 
@@ -12,22 +10,14 @@ REDIRECT_URI = "https://RedDiamond2.github.io/oauth-callback.html"
 
 @google_api.route("/google-token", methods=["POST"])
 def google_token():
-    """
-    استلام authorization_code من المتصفح والحصول على:
-    - access_token
-    - refresh_token
-    - expires_in
-    - saved_at
-    """
     data = request.get_json()
     code = data.get("code")
     phone = data.get("phone")
     email = data.get("email")
 
     if not code:
-        return jsonify({"error":"No authorization code provided"}), 400
+        return jsonify({"error":"No authorization code"}), 400
 
-    # طلب tokens من Google
     token_res = requests.post("https://oauth2.googleapis.com/token", data={
         "code": code,
         "client_id": GOOGLE_CLIENT_ID,
@@ -42,18 +32,15 @@ def google_token():
     expires_in = token_json.get("expires_in")
     saved_at = time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime())
 
-    # استدعاء بيانات المستخدم من Google
     user_info = requests.get("https://www.googleapis.com/oauth2/v2/userinfo",
                              headers={"Authorization": f"Bearer {access_token}"})
     user_json = user_info.json()
 
-    result = {
+    return jsonify({
         "access_token": access_token,
         "refresh_token": refresh_token,
         "expires_in": expires_in,
         "saved_at": saved_at,
         "user": user_json,
         "userPhone": phone
-    }
-
-    return jsonify(result)
+    })
