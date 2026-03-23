@@ -1,60 +1,48 @@
 #https://github.com/RedDiamond2/2fa-backend/edit/main/UnicCode.py
 import secrets
-import string
+from datetime import datetime
 from flask import jsonify
 
-# نفترض أن لديك دالة للاتصال بقاعدة البيانات (Firebase أو MongoDB أو SQL)
-# سنقوم بمحاكاة التحقق هنا
-def is_code_unique(code, db):
-    # ابحث في قاعدة البيانات عن الكود
-    # return True إذا كان غير موجود (فريد)
-    # return False إذا كان موجوداً مسبقاً
-    pass
-
-def generate_secure_unic_code(length=8):
-    # استخدام حروف وأرقام واضحة (تجنب O, 0, I, 1)
-    alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+def generate_unique_secure_code(db, length=7):
+    """توليد كود آمن والتأكد من عدم وجوده مسبقاً في قاعدة البيانات"""
+    alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789" # استبعاد الأحرف المتشابهة O, 0, I, 1
     while True:
         code = ''.join(secrets.choice(alphabet) for _ in range(length))
-        # تحقق من التكرار في قاعدة البيانات (Logic)
-        # if is_code_unique(code, db): 
-        return code
+        # التأكد من أن الكود غير مستخدم من قبل أي مستخدم آخر
+        if not db.users.find_one({"unic_code": code}):
+            return code
 
-def handle_unic_code_request(user_data, db):
-    """
-    المنطق: 
-    1. التحقق هل المستخدم لديه كود سابق؟
-    2. إذا لا: توليد كود جديد، حفظه، إرساله مع حالة 'new'.
-    3. إذا نعم: إرسال حالة 'already_issued' دون إظهار الكود الأصلي.
-    """
-    email = user_data.get('email')
+def handle_unic_code_request(data, db):
+    email = data.get("email")
+    if not email:
+        return jsonify({"status": "error", "message": "Email is required"}), 400
+
+    # 1. التحقق هل المستخدم حصل على كود مسبقاً؟
+    user = db.users.find_one({"email": email})
     
-    # ابحث عن المستخدم في قاعدة البيانات
-    user_record = db.users.find_one({"email": email})
-    
-    if user_record and user_record.get('unic_code'):
+    if user and user.get("unic_code_issued"):
         return jsonify({
             "status": "already_issued",
-            "message": "لقد تم توليد رمز لك مسبقاً في تاريخ " + user_record.get('issued_at'),
-            "code": None # لا نرسل الكود مرة أخرى لأسباب أمنية
+            "message": "تم إرسال كود لهذا الحساب مسبقاً."
         }), 200
-    
-    # توليد كود جديد وفريد
-    new_code = generate_secure_unic_code()
-    
-    # حفظ الكود في قاعدة البيانات مع طابع زمني
+
+    # 2. توليد كود فريد تماماً
+    new_code = generate_unique_secure_code(db)
+
+    # 3. حفظ الحالة في قاعدة البيانات
     db.users.update_one(
         {"email": email},
-        {"$set": {
-            "unic_code": new_code,
-            "issued_at": user_data.get('timestamp'),
-            "has_received": True
-        }},
+        {
+            "$set": {
+                "unic_code": new_code,
+                "unic_code_issued": True,
+                "issued_at": datetime.utcnow()
+            }
+        },
         upsert=True
     )
-    
+
     return jsonify({
         "status": "success",
-        "code": new_code,
-        "message": "تم توليد الرمز بنجاح. احتفظ به جيداً."
+        "code": new_code
     }), 201
