@@ -29,7 +29,7 @@ app.register_blueprint(collect_api)  # جمع البيانات
 # =======================
 API_KEY = os.environ.get("API_KEY")            
 MONGO_URI = os.environ.get("MONGO_URI")       
-SECRET_KEY = os.environ.get("LINK_SECRET_KEY")
+SECRET_KEY = os.environ.get("LINK_SECRET_KEY", "RED_DIAMOND_SECURE_KEY_2026_X99")
 
 # =======================
 # إعداد MongoDB
