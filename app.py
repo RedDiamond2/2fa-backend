@@ -173,6 +173,33 @@ def check_email():
 def health():
     return "OK", 200
 
+
+# =======================
+# Geo Location (NEW)
+# =======================
+@app.route("/geo", methods=["GET"])
+def geo_info():
+    try:
+        # استخراج IP الحقيقي
+        ip = request.headers.get("CF-Connecting-IP") or \
+             request.headers.get("X-Forwarded-For") or \
+             request.remote_addr
+
+        r = requests.get(
+            f"http://ip-api.com/json/{ip}?fields=status,message,country,countryCode,region,regionName,city,zip,lat,lon,timezone,isp,org,as,query",
+            timeout=5
+        )
+
+        data = r.json()
+        return jsonify(data)
+
+    except Exception as e:
+        return jsonify({
+            "status": "fail",
+            "message": "geo lookup failed",
+            "query": ip
+        })
+
 # =======================
 # عرض Fingerprints
 # =======================
