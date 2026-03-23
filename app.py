@@ -8,9 +8,53 @@ import time
 import requests
 from flask import Flask, request, jsonify
 from flask_cors import CORS
-from collect import collect_api
 from pymongo import MongoClient
+
+# استيراد الوظائف والـ Blueprints
+from collect import collect_api
 from google_oauth import google_api
+from UnicCode import handle_unic_code_request
+
+# 1️⃣ إنشاء التطبيق أولاً
+app = Flask(__name__)
+CORS(app)
+
+# 2️⃣ إعداد المتغيرات وقاعدة البيانات
+API_KEY = os.environ.get("API_KEY")         
+MONGO_URI = os.environ.get("MONGO_URI")       
+SECRET_KEY = os.environ.get("LINK_SECRET_KEY", "RED_DIAMOND_SECURE_KEY_2026_X99")
+
+client = MongoClient(MONGO_URI)
+db = client.red_diamond
+collection = db.fingerprints
+
+# 3️⃣ تسجيل الـ Blueprints
+app.register_blueprint(google_api)   
+app.register_blueprint(collect_api)  
+
+# 4️⃣ تعريف المسارات (Routes)
+@app.route('/generate-unic', methods=['POST'])
+def generate_unic():
+    data = request.json
+    # نمرر db للسيرفر لكي يتمكن من التحقق من التكرار
+    return handle_unic_code_request(data, db)
+
+# ... (بقية المسارات: verify_link, check_email, geo_info) ...
+
+@app.route("/health")
+def health():
+    return "OK", 200
+
+if __name__ == "__main__":
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host="0.0.0.0", port=port)
+
+
+
+
+
+
+
 
 # =======================
 # إنشاء تطبيق Flask
