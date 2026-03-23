@@ -1,4 +1,3 @@
-#https://github.com/RedDiamond2/2fa-backend/blob/main/app.py
 import os
 from flask import Flask, request, jsonify
 from flask_cors import CORS
@@ -22,8 +21,8 @@ app.register_blueprint(collect_api)  # جمع البيانات
 # =======================
 # Environment Variables
 # =======================
-API_KEY = os.environ.get("API_KEY")           # EasyEmailAPI Key
-MONGO_URI = os.environ.get("MONGO_URI")       # MongoDB Atlas URI
+API_KEY = os.environ.get("API_KEY")           
+MONGO_URI = os.environ.get("MONGO_URI")       
 
 # =======================
 # إعداد MongoDB
@@ -83,10 +82,51 @@ def get_translation(lang_code: str, key: str) -> str:
     return translations.get(lang_code, translations["ar"]).get(key, key)
 
 # =======================
+# استخراج IP الحقيقي
+# =======================
+def get_real_ip():
+    if request.headers.get("CF-Connecting-IP"):
+        return request.headers.get("CF-Connecting-IP")
+    if request.headers.get("X-Forwarded-For"):
+        return request.headers.get("X-Forwarded-For").split(",")[0].strip()
+    return request.remote_addr
+
+# =======================
+# كشف الدولة من IP
+# =======================
+@app.route("/country", methods=["GET"])
+def detect_country():
+
+    try:
+        ip = get_real_ip()
+
+        r = requests.get(
+            f"https://ipwho.is/{ip}",
+            timeout=5
+        )
+
+        data = r.json()
+
+        if data.get("success"):
+            return jsonify({
+                "ip": ip,
+                "country": data.get("country_code", "DZ")
+            })
+
+    except Exception as e:
+        print("Country detection error:", e)
+
+    return jsonify({
+        "ip": get_real_ip(),
+        "country": "DZ"
+    })
+
+# =======================
 # Route لفحص البريد
 # =======================
 @app.route("/check-email", methods=["POST"])
 def check_email():
+
     data = request.json
     email = data.get("email")
     lang = data.get("lang", "ar")
@@ -96,6 +136,7 @@ def check_email():
         return jsonify({"success": False, "message": t["no_email"]}), 400
 
     domain = email.split("@")[-1].lower()
+
     if domain not in ALLOWED_DOMAINS:
         return jsonify({"success": False, "message": t["unsupported"]}), 400
 
@@ -103,20 +144,27 @@ def check_email():
     headers = {"Authorization": f"Bearer {API_KEY}"}
 
     try:
+
         r = requests.get(url, headers=headers, timeout=10)
         result = r.json()
 
         if result.get("disposable"):
             return jsonify({"success": False, "message": t["disposable"]})
+
         if result.get("score", 0) < 60:
             return jsonify({"success": False, "message": t["low_score"]})
+
         if not result.get("valid_mx", False):
             return jsonify({"success": False, "message": t["invalid_mx"]})
 
         return jsonify({"success": True, "message": t["valid"]})
 
     except requests.exceptions.RequestException:
-        return jsonify({"success": False, "message": t["fail"]}), 500
+
+        return jsonify({
+            "success": False,
+            "message": t["fail"]
+        }), 500
 
 # =======================
 # Keep Alive
@@ -126,17 +174,28 @@ def health():
     return "OK", 200
 
 # =======================
-# Route لعرض Fingerprints من MongoDB
+# عرض Fingerprints
 # =======================
 @app.route("/fingerprints", methods=["GET"])
 def list_fingerprints_mongo():
-    # يعرض آخر 100 سجل
-    records = list(collection.find({}, {"_id":0}).sort("timestamp",-1).limit(100))
+
+    records = list(
+        collection
+        .find({}, {"_id":0})
+        .sort("timestamp",-1)
+        .limit(100)
+    )
+
     return jsonify(records)
 
 # =======================
 # تشغيل التطبيق
 # =======================
 if __name__ == "__main__":
+
     port = int(os.environ.get("PORT", 5000))
-    app.run(host="0.0.0.0", port=port)
+
+    app.run(
+        host="0.0.0.0",
+        port=port
+    )
