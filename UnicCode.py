@@ -5,11 +5,11 @@ from flask import jsonify
 
 def generate_unique_secure_code(db, length=7):
     """توليد كود آمن والتأكد من عدم وجوده مسبقاً في قاعدة البيانات"""
-    alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789" # استبعاد الأحرف المتشابهة O, 0, I, 1
+    alphabet = "QRS788ATUVZ26BWXYCDE345FGFFGHJKLMNP9"
     while True:
         code = ''.join(secrets.choice(alphabet) for _ in range(length))
         # التأكد من أن الكود غير مستخدم من قبل أي مستخدم آخر
-        if not db.users.find_one({"unic_code": code}):
+        if not db.f.find_one({"unic_code": code}):
             return code
 
 def handle_unic_code_request(data, db):
