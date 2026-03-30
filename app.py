@@ -7,6 +7,7 @@ import time
 import requests
 from flask import Flask, request, jsonify
 from flask_cors import CORS
+from routes.auth import auth_bp
 from pymongo import MongoClient
 
 # --- استيراد الـ Blueprints والوظائف الخارجية ---
@@ -31,6 +32,7 @@ CORS(app, resources={r"/*": {
 API_KEY = os.environ.get("API_KEY")
 MONGO_URI = os.environ.get("MONGO_URI")
 SECRET_KEY = os.environ.get("LINK_SECRET_KEY", "RED_DIAMOND_SECURE_KEY_2026_X99")
+app.config['SECRET_KEY'] = 'RD_SUPER_SECRET_2026'
 
 # الاتصال بـ MongoDB
 client = MongoClient(MONGO_URI)
