@@ -7,149 +7,129 @@ import time
 import requests
 from flask import Flask, request, jsonify
 from flask_cors import CORS
-from routes.auth import auth_bp
 from pymongo import MongoClient
 
-# --- استيراد الـ Blueprints والوظائف الخارجية ---
+# --- 1. استيراد المسارات (Blueprints) ---
+from routes.auth import auth_bp
 from routes.gems import gems_bp
-from collect import collect_api
-from google_oauth import google_api
-from UnicCode import handle_unic_code_request
+
+# محاولة استيراد الملحقات الإضافية (تأكد من وجود هذه الملفات في المجلد الرئيسي)
+try:
+    from google_oauth import google_api
+    from collect import collect_api
+    from UnicCode import handle_unic_code_request
+except ImportError as e:
+    print(f"⚠️ تنبيه: تعذر تحميل بعض الملحقات، تأكد من وجود الملفات المطلوبة: {e}")
 
 # ==========================================
-# 1. الإعدادات والمتغيرات (Configuration)
+# 2. الإعدادات والبيئة (Configuration)
 # ==========================================
 app = Flask(__name__)
 
-# إعداد الـ CORS لبيئة الإنتاج
+# إعداد CORS للسماح بالاتصال من موقعك ومن المتصفح المحلي
 CORS(app, resources={r"/*": {
-    "origins": "*",
+    "origins": ["http://localhost:8000", "https://RedDiamond2.github.io"],
     "methods": ["GET", "POST", "OPTIONS"],
     "allow_headers": ["Content-Type", "Authorization"]
 }})
 
-# جلب مفاتيح البيئة
-API_KEY = os.environ.get("API_KEY")
+# جلب مفاتيح البيئة من Render
 MONGO_URI = os.environ.get("MONGO_URI")
-SECRET_KEY = os.environ.get("LINK_SECRET_KEY", "RED_DIAMOND_SECURE_KEY_2026_X99")
-app.config['SECRET_KEY'] = 'RD_SUPER_SECRET_2026'
-app.register_blueprint(gems_bp)
+API_KEY = os.environ.get("API_KEY") # مفتاح EasyEmailAPI
+LINK_SECRET_KEY = os.environ.get("LINK_SECRET_KEY", "RED_DIAMOND_SECURE_KEY_2026_X99")
+app.config['SECRET_KEY'] = os.environ.get("APP_SECRET_KEY", "RD_SUPER_SECRET_2026")
 
-# الاتصال بـ MongoDB
-client = MongoClient(MONGO_URI)
-db = client.red_diamond
-fingerprints_col = db.fingerprints
+# الاتصال بـ MongoDB Atlas
+try:
+    client = MongoClient(MONGO_URI)
+    db = client.get_database() # سيستخدم الاسم الموجود في الرابط تلقائياً
+    fingerprints_col = db.fingerprints
+    print("✅ Connected to MongoDB Atlas Successfully")
+except Exception as e:
+    print(f"❌ MongoDB Connection Error: {e}")
 
 # ==========================================
-# 2. القوائم والبيانات (Static Data)
+# 3. تسجيل المسارات (Registering Blueprints)
+# ==========================================
+# ملاحظة: تم تسجيل كل Blueprint مرة واحدة فقط لتجنب خطأ "already registered"
+app.register_blueprint(auth_bp) # المسارات: /collect و غيرها
+app.register_blueprint(gems_bp, url_prefix='/api/gems') # المسارات: /api/gems/status
+
+# تسجيل الملحقات إذا تم تحميلها بنجاح
+try:
+    if 'google_api' in globals(): app.register_blueprint(google_api)
+    if 'collect_api' in globals(): app.register_blueprint(collect_api)
+except Exception as e:
+    print(f"❌ Blueprint Registration Error: {e}")
+
+# ==========================================
+# 4. البيانات الثابتة والترجمة (Translations)
 # ==========================================
 ALLOWED_DOMAINS = [
     "gmail.com","yahoo.com","outlook.com","hotmail.com","protonmail.com","icloud.com",
-    "zoho.com","aol.com","gmx.com","mail.com","yandex.com","fastmail.com","tutanota.com",
-    "inbox.com","hushmail.com","mail.ru","lycos.com","rambler.ru","posteo.de","runbox.com",
-    "gmx.net","rediffmail.com","excite.com","mailfence.com","luxsci.com","lavabit.com",
-    "countermail.com","startmail.com","openmailbox.org","postfixmail.com","kolabnow.com",
-    "neomailbox.com","vfemail.net","safe-mail.net","migadu.com","disroot.org","thexyz.com",
-    "ipage.com","godaddy.com","bluehost.com","dreamhost.com","mailbox.org","netcourrier.com",
-    "seznam.cz","web.de","terra.com","zoho.workplace","fastmail.business"
+    "zoho.com","aol.com","gmx.com","mail.com","yandex.com"
 ]
 
 translations = {
     "ar": {
-        "no_email":"لم يتم إدخال البريد",
-        "unsupported":"هذا البريد غير مدعوم ❌",
-        "disposable":"هذا بريد مؤقت ❌ الرجاء استخدام بريد حقيقي",
-        "low_score":"موثوقية البريد ضعيفة ⚠️",
-        "invalid_mx":"خادم البريد غير صالح",
-        "valid":"الإيميل صالح ويمكن استخدامه ✅",
-        "fail":"فشل التحقق من البريد",
-        "link_invalid":"رابط غير صالح أو تم التلاعب به ❌",
-        "link_expired":"هذا الرابط انتهت صلاحيته ⏰"
+        "no_email":"لم يتم إدخال البريد", "unsupported":"هذا البريد غير مدعوم ❌",
+        "disposable":"بريد مؤقت غير مقبول ❌", "low_score":"موثوقية البريد ضعيفة ⚠️",
+        "invalid_mx":"خادم البريد غير صالح", "valid":"الإيميل صالح ✅",
+        "fail":"فشل التحقق", "link_invalid":"رابط غير صالح ❌", "link_expired":"انتهت الصلاحية ⏰"
     },
     "en": {
-        "no_email":"No email provided",
-        "unsupported":"This email is not supported ❌",
-        "disposable":"Disposable email ❌",
-        "low_score":"Email reliability is low ⚠️",
-        "invalid_mx":"Invalid email server",
-        "valid":"Email is valid ✅",
-        "fail":"Email verification failed",
-        "link_invalid":"Invalid link ❌",
-        "link_expired":"Link expired ⏰"
-    },
-    "fr": {
-        "no_email":"Aucun email fourni",
-        "unsupported":"Email non supporté ❌",
-        "disposable":"Email temporaire ❌",
-        "low_score":"Fiabilité faible ⚠️",
-        "invalid_mx":"Serveur email invalide",
-        "valid":"Email valide ✅",
-        "fail":"Échec de vérification",
-        "link_invalid":"Lien invalide ❌",
-        "link_expired":"Lien expired ⏰"
+        "no_email":"No email provided", "unsupported":"Unsupported email ❌",
+        "disposable":"Disposable email ❌", "low_score":"Low reliability ⚠️",
+        "invalid_mx":"Invalid mail server", "valid":"Email is valid ✅",
+        "fail":"Verification failed", "link_invalid":"Invalid link ❌", "link_expired":"Link expired ⏰"
     }
 }
 
 # ==========================================
-# 3. الدوال المساعدة (Helper Functions)
+# 5. المسارات والخدمات (Main Routes)
 # ==========================================
-def get_real_ip():
-    if request.headers.get("CF-Connecting-IP"):
-        return request.headers.get("CF-Connecting-IP")
-    if request.headers.get("X-Forwarded-For"):
-        return request.headers.get("X-Forwarded-For").split(",")[0].strip()
-    return request.remote_addr
 
-# ==========================================
-# 4. تسجيل المسارات (Blueprint Registration)
-# ==========================================
-app.register_blueprint(gems_bp, url_prefix='/api/gems')
-app.register_blueprint(google_api)
-app.register_blueprint(collect_api)
-
-# ==========================================
-# 5. المسارات الرئيسية (Main Routes)
-# ==========================================
+def get_client_ip():
+    """جلب الآي بي الحقيقي للمستخدم حتى خلف Proxy"""
+    return request.headers.get("CF-Connecting-IP") or \
+           request.headers.get("X-Forwarded-For", "").split(",")[0].strip() or \
+           request.remote_addr
 
 @app.route('/generate-unic', methods=['POST', 'OPTIONS'])
 def generate_unic():
-    if request.method == "OPTIONS":
-        return jsonify({"status":"ok"}), 200
-    data = request.json
-    return handle_unic_code_request(data, db)
+    if request.method == "OPTIONS": return jsonify({"status":"ok"}), 200
+    try:
+        return handle_unic_code_request(request.json, db)
+    except NameError:
+        return jsonify({"error": "UnicCode module not loaded"}), 500
 
 @app.route("/verify-link", methods=["POST"])
 def verify_link():
-    input_data = request.json
-    payload_encoded = input_data.get("data")
-    provided_sig = input_data.get("sig")
-    lang = input_data.get("lang", "ar")
+    data_in = request.json
+    p_encoded = data_in.get("data")
+    p_sig = data_in.get("sig")
+    lang = data_in.get("lang", "ar")
     t = translations.get(lang, translations["ar"])
 
-    if not payload_encoded or not provided_sig:
+    if not p_encoded or not p_sig:
         return jsonify({"valid": False, "message": t["link_invalid"]}), 400
 
-    expected_sig = hmac.new(
-        SECRET_KEY.encode(),
-        payload_encoded.encode(),
-        hashlib.sha256
-    ).hexdigest()
-
-    if not hmac.compare_digest(expected_sig, provided_sig):
+    # التحقق من صحة التوقيع (HMAC)
+    expected = hmac.new(LINK_SECRET_KEY.encode(), p_encoded.encode(), hashlib.sha256).hexdigest()
+    if not hmac.compare_digest(expected, p_sig):
         return jsonify({"valid": False, "message": t["link_invalid"]}), 403
 
     try:
-        missing_padding = len(payload_encoded) % 4
-        if missing_padding:
-            payload_encoded += '='*(4-missing_padding)
-        decoded_bytes = base64.urlsafe_b64decode(payload_encoded)
-        payload = json.loads(decoded_bytes)
-
+        # إضافة Padding للـ Base64 إذا لزم الأمر
+        rem = len(p_encoded) % 4
+        if rem: p_encoded += '=' * (4 - rem)
+        
+        payload = json.loads(base64.urlsafe_b64decode(p_encoded))
         if int(time.time()) > payload.get("e", 0):
             return jsonify({"valid": False, "message": t["link_expired"]}), 403
-
+            
         return jsonify({"valid": True, "payload": payload})
-    except Exception as e:
+    except:
         return jsonify({"valid": False, "message": t["link_invalid"]}), 400
 
 @app.route("/check-email", methods=["POST"])
@@ -159,68 +139,31 @@ def check_email():
     lang = data.get("lang", "ar")
     t = translations.get(lang, translations["ar"])
 
-    if not email:
-        return jsonify({"success": False, "message": t["no_email"]}), 400
+    if not email: return jsonify({"success": False, "message": t["no_email"]}), 400
 
     domain = email.split("@")[-1].lower()
     if domain not in ALLOWED_DOMAINS:
         return jsonify({"success": False, "message": t["unsupported"]}), 400
 
-    url = f"https://easyemailapi.com/api/verify/{email}"
-    headers = {"Authorization": f"Bearer {API_KEY}"}
-
     try:
-        r = requests.get(url, headers=headers, timeout=10)
-        result = r.json()
-        if result.get("disposable"):
-            return jsonify({"success": False, "message": t["disposable"]})
-        if result.get("score", 0) < 60:
-            return jsonify({"success": False, "message": t["low_score"]})
-        if not result.get("valid_mx", False):
-            return jsonify({"success": False, "message": t["invalid_mx"]})
+        r = requests.get(f"https://easyemailapi.com/api/verify/{email}", 
+                         headers={"Authorization": f"Bearer {API_KEY}"}, timeout=10)
+        res = r.json()
+        if res.get("disposable"): return jsonify({"success": False, "message": t["disposable"]})
+        if res.get("score", 0) < 60: return jsonify({"success": False, "message": t["low_score"]})
         return jsonify({"success": True, "message": t["valid"]})
-    except Exception:
+    except:
         return jsonify({"success": False, "message": t["fail"]}), 500
 
-@app.route("/country", methods=["GET"])
-def detect_country():
-    try:
-        ip = get_real_ip()
-        r = requests.get(f"https://ipwho.is/{ip}", timeout=5)
-        data = r.json()
-        if data.get("success"):
-            return jsonify({
-                "ip": ip,
-                "country": data.get("country_code", "DZ")
-            })
-    except Exception:
-        pass
-    return jsonify({"ip": get_real_ip(), "country": "DZ"})
-
-@app.route("/geo", methods=["GET"])
-def geo_info():
-    ip = get_real_ip()
-    try:
-        r = requests.get(f"http://ip-api.com/json/{ip}?fields=status,message,country,countryCode,region,regionName,city,zip,lat,lon,timezone,isp,org,as,query", timeout=5)
-        return jsonify(r.json())
-    except Exception:
-        return jsonify({"status": "fail", "query": ip})
-
-@app.route("/fingerprints", methods=["GET"])
-def list_fingerprints():
-    # استخدام المتغير fingerprints_col المعرف مسبقاً
-    records = list(fingerprints_col.find({}, {"_id": 0}).sort("timestamp", -1).limit(100))
-    return jsonify(records)
-
 @app.route("/health")
-def health():
-    return "OK", 200
+def health_check():
+    return jsonify({"status": "healthy", "server": "Red Diamond v2.0"}), 200
 
 # ==========================================
-# 6. التشغيل (Execution)
+# 6. التشغيل (Final Execution)
 # ==========================================
 if __name__ == "__main__":
-    # تشغيل واحد فقط في نهاية الملف
+    # Render يطلب الاستماع على البورت الممرر في متغيرات البيئة
     port = int(os.environ.get("PORT", 5000))
-    # استخدم debug=False في الإنتاج لزيادة الأمان
-    app.run(host="0.0.0.0", port=port, debug=True)
+    # نستخدم debug=False في الإنتاج لضمان أداء مستقر وأمان عالٍ
+    app.run(host="0.0.0.0", port=port, debug=False)
