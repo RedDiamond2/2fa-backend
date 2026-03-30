@@ -2,22 +2,33 @@
 from flask import Blueprint, request, jsonify
 import datetime
 import uuid
-from models.mongo_db import gems_collection, transactions_collection, users_collection
+from models.mongo_db import gems_collection, transactions_collection
 from services.auth_service import decode_token
 
+# تعريف الـ Blueprint بدون بادئة هنا لأننا سنحددها في app.py
 gems_bp = Blueprint('gems', __name__)
 
 def get_user_from_token():
-    """استخراج البريد الإلكتروني من توكن JWT"""
+    """استخراج البريد الإلكتروني من توكن JWT في الهيدر"""
     auth_header = request.headers.get('Authorization')
     if not auth_header or not auth_header.startswith('Bearer '):
         return None
+    
     token = auth_header.split(" ")[1]
+    # استخدام الدالة التي عرفتها أنت في auth_service
     result = decode_token(token)
-    return result if isinstance(result, str) and "@" in result else None
+    
+    # التأكد أن النتيجة إيميل وليس رسالة خطأ نصية
+    if isinstance(result, str) and "@" in result:
+        return result
+    return None
 
+# --- المسارات (Endpoints) ---
+
+# لاحظ: المسار هنا أصبح /status فقط لأن البادئة /api/gems مضافة في app.py
 @gems_bp.route('/status', methods=['GET', 'OPTIONS'])
 def get_gems_status():
+    # معالجة طلب Preflight الخاص بـ CORS
     if request.method == 'OPTIONS':
         return jsonify({"status": "ok"}), 200
 
@@ -25,23 +36,20 @@ def get_gems_status():
     if not email:
         return jsonify({"success": False, "message": "Unauthorized"}), 401
 
-    # 1. محاولة جلب البيانات من مجموعة الجواهر
+    # 1. البحث عن سجل الجواهر
     user_gems = gems_collection.find_one({"email": email})
     
-    # 2. إذا لم يجد في gems، نبحث في users (توافق مع النظام القديم)
     if not user_gems:
-        user_info = users_collection.find_one({"email": email})
-        
-        # إنشاء سجل جواهر جديد
+        # إنشاء حساب جديد بـ 50 جوهرة (هدية ترحيبية)
         user_gems = {
             "email": email,
             "balance": 50,
-            "referral_code": (user_info.get("unic_code") if user_info else str(uuid.uuid4())[:8].upper()),
+            "referral_code": str(uuid.uuid4())[:8].upper(),
             "created_at": datetime.datetime.utcnow()
         }
         gems_collection.insert_one(user_gems)
         
-        # تسجيل هدية الترحيب
+        # تسجيل العملية الأولى
         transactions_collection.insert_one({
             "email": email,
             "amount": 50,
@@ -50,15 +58,18 @@ def get_gems_status():
             "timestamp": datetime.datetime.utcnow()
         })
 
-    # 3. جلب سجل العمليات
-    history = list(transactions_collection.find(
-        {"email": email}, {"_id": 0}
+    # 2. جلب سجل العمليات وتحويل التاريخ لنص صالح للـ JSON
+    raw_history = list(transactions_collection.find(
+        {"email": email}, 
+        {"_id": 0}
     ).sort("timestamp", -1).limit(10))
 
-    # تحويل التواريخ لنصوص
-    for trx in history:
-        if isinstance(trx.get('timestamp'), datetime.datetime):
+    # تحويل timestamp إلى صيغة ISO ليتمكن JavaScript من قراءتها
+    history = []
+    for trx in raw_history:
+        if isinstance(trx['timestamp'], datetime.datetime):
             trx['timestamp'] = trx['timestamp'].isoformat()
+        history.append(trx)
 
     return jsonify({
         "success": True,
@@ -76,7 +87,6 @@ def add_referral_gems():
     if not ref_code or not new_user_email:
         return jsonify({"success": False, "message": "Invalid request"}), 400
 
-    # البحث عن صاحب الكود في مجموعة الجواهر
     referrer = gems_collection.find_one({"referral_code": ref_code})
     
     if referrer and referrer['email'] != new_user_email:
@@ -86,15 +96,14 @@ def add_referral_gems():
             {"$inc": {"balance": 30}}
         )
         
-        # تسجيل العملية
         transactions_collection.insert_one({
             "email": referrer['email'],
             "amount": 30,
             "type": "credit",
-            "reason": f"Referral Bonus (New User) 💎",
+            "reason": "Referral Bonus 💎",
             "timestamp": datetime.datetime.utcnow()
         })
         
-        return jsonify({"success": True, "message": "Bonus added to referrer"})
+        return jsonify({"success": True, "message": "Bonus added"})
     
-    return jsonify({"success": False, "message": "Invalid or self-referral code"}), 400
+    return jsonify({"success": False, "message": "Invalid code"}), 404
