@@ -29,17 +29,10 @@ app = Flask(__name__)
 
 # إعداد CORS للسماح بالاتصال من موقعك ومن المتصفح المحلي
 CORS(app, resources={r"/*": {
-    "origins": ["https://reddiamond2.github.io", "http://localhost:8000"],
+    "origins": ["http://localhost:8000", "https://RedDiamond2.github.io"],
     "methods": ["GET", "POST", "OPTIONS"],
-    "allow_headers": ["Content-Type", "Authorization"],
-    "expose_headers": ["Content-Type", "Authorization"],
-    "supports_credentials": True
+    "allow_headers": ["Content-Type", "Authorization"]
 }})
-
-# أضف هذا المسار يدوياً للتأكد من أن طلبات Preflight تعود دائماً بـ OK
-@app.route('/api/gems/status', methods=['OPTIONS'])
-def options_handler():
-    return jsonify({"status": "ok"}), 200
 
 # جلب مفاتيح البيئة من Render
 MONGO_URI = os.environ.get("MONGO_URI")
