@@ -13,6 +13,7 @@ from pymongo import MongoClient
 # --- 1. استيراد المسارات (Blueprints) ---
 from routes.auth import auth_bp
 from routes.gems import gems_bp
+from routes.logout import logout_bp
 
 # محاولة استيراد الملحقات الإضافية (تأكد من وجود هذه الملفات في المجلد الرئيسي)
 try:
@@ -55,6 +56,7 @@ except Exception as e:
 # ملاحظة: تم تسجيل كل Blueprint مرة واحدة فقط لتجنب خطأ "already registered"
 app.register_blueprint(auth_bp) # المسارات: /collect و غيرها
 app.register_blueprint(gems_bp, url_prefix='/api/gems') # المسارات: /api/gems/status
+app.register_blueprint(logout_bp)
 
 # تسجيل الملحقات إذا تم تحميلها بنجاح
 try:
@@ -130,7 +132,8 @@ def verify_link():
             return jsonify({"valid": False, "message": t["link_expired"]}), 403
             
         return jsonify({"valid": True, "payload": payload})
-    except:
+    except Exception as e:
+        print(f"🔗 Signature/Payload Error: {e}")
         return jsonify({"valid": False, "message": t["link_invalid"]}), 400
 
 @app.route("/check-email", methods=["POST"])

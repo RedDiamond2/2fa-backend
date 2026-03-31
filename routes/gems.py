@@ -107,3 +107,16 @@ def add_referral_gems():
         return jsonify({"success": True, "message": "Bonus added"})
     
     return jsonify({"success": False, "message": "Invalid code"}), 404
+
+@gems_bp.route('/claim-reward', methods=['POST'])
+def claim_profile_reward():
+    email = get_user_from_token() # الدالة التي عرفناها سابقاً
+    data = request.json
+    field = data.get('field')
+    
+    if not email or not field:
+        return jsonify({"success": False, "message": "Invalid request"}), 400
+        
+    from services.gem_service import GemService
+    success, msg = GemService.handle_profile_reward(email, field)
+    return jsonify({"success": success, "message": msg})
