@@ -1,7 +1,6 @@
 # app.py
-# app.py
-# Red Diamond v2.7 - Production Ready
-# تم دمج إصلاحات CORS، المسارات المفقودة، وتوافق Blueprints
+# Red Diamond Project - Professional Production Version 2.8 (2026)
+# الوصف: الملف الرئيسي للسيرفر - معالجة كاملة لـ CORS، الجلسات، والمسارات المرنة.
 
 import os
 import hmac
@@ -11,23 +10,21 @@ import json
 import time
 import datetime
 import requests
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, make_response
 from flask_cors import CORS
 
-# --- 1. استيراد الإعدادات المركزية ---
+# --- 1. استيراد الإعدادات المركزية وقاعدة البيانات ---
 from config import config
-
-# --- 2. استيراد نماذج قاعدة البيانات ---
 from models.mongo_db import fingerprints_col, db
 
-# --- 3. استيراد المسارات (Blueprints) ---
+# --- 2. استيراد المسارات (Blueprints) ---
 from routes.auth import auth_bp
 from routes.gems import gems_bp
 from routes.user import user_bp
 from routes.collect import collect_api
 from routes.logout import logout_bp
 
-# استيراد الملحقات الديناميكية (في الجذر)
+# استيراد الملحقات الديناميكية
 try:
     from google_oauth import google_api
 except ImportError:
@@ -35,29 +32,38 @@ except ImportError:
     print("⚠️ Warning: Google OAuth module not found.")
 
 # ==========================================
-# 4. تهيئة التطبيق (Initialization)
+# 3. تهيئة التطبيق (Initialization)
 # ==========================================
 app = Flask(__name__)
 app.config.from_object(config)
 
-# إعداد CORS الاحترافي لحل مشاكل الاتصال من GitHub Pages
+# إعداد CORS الاحترافي للسماح بالاتصال من موقع GitHub Pages وبيئة التطوير
 CORS(app, resources={r"/*": {
     "origins": config.ALLOWED_ORIGINS,
     "methods": ["GET", "POST", "OPTIONS"],
-    "allow_headers": ["Content-Type", "Authorization", "X-Requested-With"]
+    "allow_headers": ["Content-Type", "Authorization", "X-Requested-With", "Accept"],
+    "expose_headers": ["Content-Type", "Authorization"]
 }})
 
-# جلب المفاتيح من ملف config
+# ترويسات الأمان الإضافية لحل مشاكل Firebase Popup و COOP
+@app.after_request
+def add_security_headers(response):
+    response.headers['Cross-Origin-Opener-Policy'] = 'unsafe-none'
+    response.headers['Cross-Origin-Embedder-Policy'] = 'require-corp'
+    return response
+
+# جلب المفاتيح من الإعدادات
 LINK_SECRET_KEY = config.LINK_SECRET_KEY
 API_KEY = config.EMAIL_API_KEY
 
 # ==========================================
-# 5. تسجيل المسارات (Registering Blueprints)
+# 4. تسجيل المسارات (Registering Blueprints)
 # ==========================================
+# نستخدم الـ url_prefix لتنظيم الـ API
 app.register_blueprint(auth_bp, url_prefix='/api/auth')
 app.register_blueprint(gems_bp, url_prefix='/api/gems')
 app.register_blueprint(user_bp, url_prefix='/api/user')
-app.register_blueprint(collect_api, url_prefix='/api') # تم توحيدها تحت /api
+app.register_blueprint(collect_api, url_prefix='/api')
 app.register_blueprint(logout_bp, url_prefix='/api')
 
 if google_api:
@@ -67,7 +73,7 @@ if google_api:
         print(f"❌ Google OAuth Blueprint Error: {e}")
 
 # ==========================================
-# 6. البيانات الثابتة والترجمة (Translations)
+# 5. البيانات الثابتة والترجمة (Translations)
 # ==========================================
 ALLOWED_DOMAINS = [
     "gmail.com","yahoo.com","outlook.com","hotmail.com","protonmail.com",
@@ -96,21 +102,20 @@ translations = {
 }
 
 # ==========================================
-# 7. الوظائف المساعدة (Utilities)
+# 6. الوظائف المساعدة (Utilities)
 # ==========================================
 def get_client_ip():
-    """جلب الآي بي الحقيقي للمستخدم حتى خلف الـ Proxy"""
+    """جلب الآي بي الحقيقي للمستخدم"""
     return request.headers.get("CF-Connecting-IP") or \
            request.headers.get("X-Forwarded-For", "").split(",")[0].strip() or \
            request.remote_addr
 
 # ==========================================
-# 8. المسارات الرئيسية (Core App Routes)
+# 7. المسارات الرئيسية (Core App Routes)
 # ==========================================
 
 @app.route("/api/geo-lite", methods=["GET"])
 def detect_location():
-    """تحديد الدولة والآي بي لخدمة واجهة المستخدم"""
     ip = get_client_ip()
     try:
         r = requests.get(f"https://ipwho.is/{ip}", timeout=5)
@@ -123,10 +128,10 @@ def detect_location():
     except:
         return jsonify({"ip": ip, "country": "DZ", "status": "fallback"})
 
+# مسارات مرنة لخدمة الرمز الموحد (تعمل مع /api وبدونها)
 @app.route("/generate-unic", methods=["POST", "OPTIONS"])
 @app.route("/api/generate-unic", methods=["POST", "OPTIONS"])
 def generate_unic_code():
-    """خدمة الرمز الموحد لملف OneTimeUnicCode.js"""
     if request.method == "OPTIONS":
         return jsonify({"status": "ok"}), 200
     import uuid
@@ -134,8 +139,8 @@ def generate_unic_code():
     return jsonify({"success": True, "code": code}), 200
 
 @app.route("/verify-link", methods=["POST"])
+@app.route("/api/verify-link", methods=["POST"])
 def verify_link_hmac():
-    """التحقق من صحة الروابط المشفرة"""
     data_in = request.json
     p_encoded = data_in.get("data")
     p_sig = data_in.get("sig")
@@ -159,10 +164,13 @@ def verify_link_hmac():
     except:
         return jsonify({"valid": False, "message": t["link_invalid"]}), 400
 
-@app.route("/check-email", methods=["POST"])
-@app.route("/api/check-email", methods=["POST"])
+# مسارات مرنة للتحقق من الإيميل (تعمل مع /api وبدونها)
+@app.route("/check-email", methods=["POST", "OPTIONS"])
+@app.route("/api/check-email", methods=["POST", "OPTIONS"])
 def validate_user_email():
-    """التحقق من صلاحية البريد الإلكتروني وبدء جلسة العمل"""
+    if request.method == "OPTIONS":
+        return jsonify({"status": "ok"}), 200
+        
     data = request.json
     email = data.get("email")
     lang = data.get("lang", "ar")
@@ -195,9 +203,15 @@ def validate_user_email():
         print(f"❌ Email Verification Error: {e}")
         return jsonify({"success": False, "message": t["fail"]}), 500
 
+# مسار تجميع البيانات الاحتياطي (لضمان عمل info.js و app.js القديم)
+@app.route("/collect", methods=["POST", "OPTIONS"])
+def legacy_collect():
+    if request.method == "OPTIONS": return jsonify({"status": "ok"}), 200
+    from routes.collect import handle_collection
+    return handle_collection()
+
 @app.route("/health")
 def health():
-    """مسار Render للتأكد من عمل السيرفر"""
     return jsonify({
         "status": "online", 
         "db_connected": db is not None,
@@ -210,8 +224,9 @@ def get_country():
     return jsonify({"country": country, "success": True}), 200
 
 # ==========================================
-# 9. التشغيل (Run)
+# 8. التشغيل (Run)
 # ==========================================
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
+    # إيقاف Debug في الإنتاج لزيادة الأمان والأداء
     app.run(host="0.0.0.0", port=port, debug=False)
