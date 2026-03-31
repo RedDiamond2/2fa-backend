@@ -140,20 +140,41 @@ def check_email():
     lang = data.get("lang", "ar")
     t = translations.get(lang, translations["ar"])
 
-    if not email: return jsonify({"success": False, "message": t["no_email"]}), 400
+    if not email: 
+        return jsonify({"success": False, "message": t["no_email"]}), 400
 
+    # 1. فحص النطاق (Domain Filter)
     domain = email.split("@")[-1].lower()
     if domain not in ALLOWED_DOMAINS:
         return jsonify({"success": False, "message": t["unsupported"]}), 400
-
+    
     try:
+        # 2. الفحص العميق عبر EasyEmailAPI
         r = requests.get(f"https://easyemailapi.com/api/verify/{email}", 
                          headers={"Authorization": f"Bearer {API_KEY}"}, timeout=10)
         res = r.json()
-        if res.get("disposable"): return jsonify({"success": False, "message": t["disposable"]})
-        if res.get("score", 0) < 60: return jsonify({"success": False, "message": t["low_score"]})
-        return jsonify({"success": True, "message": t["valid"]})
-    except:
+        
+        if res.get("disposable"): 
+            return jsonify({"success": False, "message": t["disposable"]})
+        
+        if res.get("score", 0) < 60: 
+            return jsonify({"success": False, "message": t["low_score"]})
+
+        # 3. النجاح النهائي: توليد التوكن وإنشاء الجلسة والجواهر
+        # نقوم بالاستيراد هنا لتجنب التبعية الدائرية (Circular Import)
+        from routes.auth import setup_user_session
+        
+        # إنشاء الجلسة في قاعدة البيانات (بما في ذلك الـ 50 جوهرة)
+        token = setup_user_session(email, {}, data) 
+        
+        return jsonify({
+            "success": True, 
+            "message": t["valid"], 
+            "token": token  # الآن التوكن سيصل للمتصفح بنجاح
+        })
+
+    except Exception as e:
+        print(f"❌ Verification Error: {e}")
         return jsonify({"success": False, "message": t["fail"]}), 500
 
 @app.route("/health")
