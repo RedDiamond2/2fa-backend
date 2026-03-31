@@ -1,10 +1,15 @@
 # app.py
+# app.py
+# Red Diamond v2.7 - Production Ready
+# تم دمج إصلاحات CORS، المسارات المفقودة، وتوافق Blueprints
+
 import os
 import hmac
 import hashlib
 import base64
 import json
 import time
+import datetime
 import requests
 from flask import Flask, request, jsonify
 from flask_cors import CORS
@@ -13,7 +18,6 @@ from flask_cors import CORS
 from config import config
 
 # --- 2. استيراد نماذج قاعدة البيانات ---
-# سيتم استخدام الاتصال المهيأ مسبقاً في models/mongo_db.py
 from models.mongo_db import fingerprints_col, db
 
 # --- 3. استيراد المسارات (Blueprints) ---
@@ -26,9 +30,9 @@ from routes.logout import logout_bp
 # استيراد الملحقات الديناميكية (في الجذر)
 try:
     from google_oauth import google_api
-    from UnicCode import handle_unic_code_request
-except ImportError as e:
-    print(f"⚠️ Warning: Optional modules not loaded: {e}")
+except ImportError:
+    google_api = None
+    print("⚠️ Warning: Google OAuth module not found.")
 
 # ==========================================
 # 4. تهيئة التطبيق (Initialization)
@@ -36,33 +40,31 @@ except ImportError as e:
 app = Flask(__name__)
 app.config.from_object(config)
 
-# إعداد CORS للسماح بالاتصال من موقع GitHub ومن البيئة المحلية
+# إعداد CORS الاحترافي لحل مشاكل الاتصال من GitHub Pages
 CORS(app, resources={r"/*": {
     "origins": config.ALLOWED_ORIGINS,
     "methods": ["GET", "POST", "OPTIONS"],
-    "allow_headers": ["Content-Type", "Authorization"]
+    "allow_headers": ["Content-Type", "Authorization", "X-Requested-With"]
 }})
 
-# جلب المفاتيح من ملف config للعمل بها محلياً
+# جلب المفاتيح من ملف config
 LINK_SECRET_KEY = config.LINK_SECRET_KEY
 API_KEY = config.EMAIL_API_KEY
 
 # ==========================================
 # 5. تسجيل المسارات (Registering Blueprints)
 # ==========================================
-# ملاحظة: url_prefix يساعد في تنظيم روابط الـ API في الـ Frontend
 app.register_blueprint(auth_bp, url_prefix='/api/auth')
 app.register_blueprint(gems_bp, url_prefix='/api/gems')
 app.register_blueprint(user_bp, url_prefix='/api/user')
-app.register_blueprint(collect_api) # يحتوي على /collect داخلياً
+app.register_blueprint(collect_api, url_prefix='/api') # تم توحيدها تحت /api
 app.register_blueprint(logout_bp, url_prefix='/api')
 
-# تسجيل الملحقات الديناميكية إذا وجدت
-try:
-    if 'google_api' in locals() or 'google_api' in globals():
+if google_api:
+    try:
         app.register_blueprint(google_api, url_prefix='/auth/google')
-except Exception as e:
-    print(f"❌ Google OAuth Blueprint Error: {e}")
+    except Exception as e:
+        print(f"❌ Google OAuth Blueprint Error: {e}")
 
 # ==========================================
 # 6. البيانات الثابتة والترجمة (Translations)
@@ -111,7 +113,6 @@ def detect_location():
     """تحديد الدولة والآي بي لخدمة واجهة المستخدم"""
     ip = get_client_ip()
     try:
-        # استخدام ipwho.is للحصول على تفاصيل جغرافية سريعة
         r = requests.get(f"https://ipwho.is/{ip}", timeout=5)
         res = r.json()
         return jsonify({
@@ -122,9 +123,19 @@ def detect_location():
     except:
         return jsonify({"ip": ip, "country": "DZ", "status": "fallback"})
 
+@app.route("/generate-unic", methods=["POST", "OPTIONS"])
+@app.route("/api/generate-unic", methods=["POST", "OPTIONS"])
+def generate_unic_code():
+    """خدمة الرمز الموحد لملف OneTimeUnicCode.js"""
+    if request.method == "OPTIONS":
+        return jsonify({"status": "ok"}), 200
+    import uuid
+    code = str(uuid.uuid4())[:8].upper()
+    return jsonify({"success": True, "code": code}), 200
+
 @app.route("/verify-link", methods=["POST"])
 def verify_link_hmac():
-    """التحقق من صحة الروابط المشفرة (تستخدم في العروض والجواهر)"""
+    """التحقق من صحة الروابط المشفرة"""
     data_in = request.json
     p_encoded = data_in.get("data")
     p_sig = data_in.get("sig")
@@ -134,25 +145,22 @@ def verify_link_hmac():
     if not p_encoded or not p_sig:
         return jsonify({"valid": False, "message": t["link_invalid"]}), 400
 
-    # حساب التوقيع المتوقع ومقارنته
     expected = hmac.new(LINK_SECRET_KEY.encode(), p_encoded.encode(), hashlib.sha256).hexdigest()
     if not hmac.compare_digest(expected, p_sig):
         return jsonify({"valid": False, "message": t["link_invalid"]}), 403
 
     try:
-        # إضافة الحشو (Padding) لفك تشفير Base64
         rem = len(p_encoded) % 4
         if rem: p_encoded += '=' * (4 - rem)
         payload = json.loads(base64.urlsafe_b64decode(p_encoded))
-        
         if int(time.time()) > payload.get("e", 0):
             return jsonify({"valid": False, "message": t["link_expired"]}), 403
-            
         return jsonify({"valid": True, "payload": payload})
     except:
         return jsonify({"valid": False, "message": t["link_invalid"]}), 400
 
 @app.route("/check-email", methods=["POST"])
+@app.route("/api/check-email", methods=["POST"])
 def validate_user_email():
     """التحقق من صلاحية البريد الإلكتروني وبدء جلسة العمل"""
     data = request.json
@@ -168,7 +176,6 @@ def validate_user_email():
         return jsonify({"success": False, "message": t["unsupported"]}), 400
     
     try:
-        # التحقق الخارجي من جودة الإيميل
         r = requests.get(f"https://easyemailapi.com/api/verify/{email}", 
                          headers={"Authorization": f"Bearer {API_KEY}"}, timeout=10)
         res = r.json()
@@ -176,9 +183,8 @@ def validate_user_email():
         if res.get("disposable"): return jsonify({"success": False, "message": t["disposable"]})
         if res.get("score", 0) < 60: return jsonify({"success": False, "message": t["low_score"]})
 
-        # استيراد محلي لتجنب الـ Circular Import وإنشاء التوكن
-        from services.auth_service import create_access_token
-        token = create_access_token({"email": email})
+        from services.auth_service import generate_token
+        token = generate_token(email)
         
         return jsonify({
             "success": True, 
@@ -191,24 +197,21 @@ def validate_user_email():
 
 @app.route("/health")
 def health():
-    """مسار يستخدمه Render للتأكد من أن السيرفر يعمل"""
+    """مسار Render للتأكد من عمل السيرفر"""
     return jsonify({
         "status": "online", 
         "db_connected": db is not None,
         "timestamp": datetime.datetime.utcnow().isoformat()
     }), 200
 
-
 @app.route('/country', methods=['GET'])
 def get_country():
-    # محاولة جلب الدولة من ترويسات Render/Cloudflare
-    country = request.headers.get("CF-Ipcountry") or "DZ" # DZ كقيمة افتراضية للجزائر
+    country = request.headers.get("CF-Ipcountry") or "DZ"
     return jsonify({"country": country, "success": True}), 200
+
 # ==========================================
 # 9. التشغيل (Run)
 # ==========================================
 if __name__ == "__main__":
-    # استخدام المنفذ المخصص من Render
     port = int(os.environ.get("PORT", 5000))
-    # في الإنتاج، يجب دائماً ضبط debug=False
     app.run(host="0.0.0.0", port=port, debug=False)
