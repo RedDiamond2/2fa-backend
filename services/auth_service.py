@@ -28,7 +28,7 @@ def generate_token(user_email):
             # وقت الإصدار: الآن
             'iat': datetime.datetime.utcnow(),
             # صاحب التوكن: البريد الإلكتروني
-            'sub': str(user_email)
+            'email': str(user_email)
         }
         
         token = jwt.encode(

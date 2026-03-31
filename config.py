@@ -12,6 +12,9 @@ class Config:
     MONGO_URI = os.environ.get("MONGO_URI")
     DB_NAME = "red_diamond"
 
+    # أضف بريدك هنا (يمكن إضافة أكثر من بريد)
+    ADMIN_EMAILS = ["sdcfsg59@gmail.com", "admin@reddiamond.com"]
+    
     # --- مفاتيح الأمان والتشفير ---
     # المفتاح الأساسي لتشفير جلسات Flask
     SECRET_KEY = os.environ.get("APP_SECRET_KEY", "RD_SUPER_SECRET_2026_JWT_KEY")
