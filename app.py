@@ -18,7 +18,7 @@ from routes.logout import logout_bp
 
 try:
     from google_oauth import google_api
-    from collect import collect_api
+    from routes.collect import collect_api
     from UnicCode import handle_unic_code_request
 except ImportError as e:
     print(f"⚠️ تنبيه: تعذر تحميل بعض الملحقات البرمجية: {e}")
