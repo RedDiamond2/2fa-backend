@@ -198,6 +198,12 @@ def health():
         "timestamp": datetime.datetime.utcnow().isoformat()
     }), 200
 
+
+@app.route('/country', methods=['GET'])
+def get_country():
+    # محاولة جلب الدولة من ترويسات Render/Cloudflare
+    country = request.headers.get("CF-Ipcountry") or "DZ" # DZ كقيمة افتراضية للجزائر
+    return jsonify({"country": country, "success": True}), 200
 # ==========================================
 # 9. التشغيل (Run)
 # ==========================================
