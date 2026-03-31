@@ -1,7 +1,7 @@
 # routes/user.py
 from flask import Blueprint, request, jsonify
 import datetime
-from models.mongo_db import users_collection, fingerprints_collection
+from models.mongo_db import users_col, fingerprints_col
 from middleware.auth_guard import token_required
 
 # تعريف الـ Blueprint
@@ -15,7 +15,7 @@ user_bp = Blueprint('user', __name__)
 def get_profile(user_email):
     """جلب بيانات المستخدم الأساسية وتاريخ انضمامه"""
     try:
-        user_data = users_collection.find_one(
+        user_data = users_col.find_one(
             {"email": user_email}, 
             {"_id": 0, "password": 0}  # حجب الـ ID وكلمة المرور للأمان
         )
@@ -59,7 +59,7 @@ def update_profile(user_email):
         update_query["updated_at"] = datetime.datetime.utcnow()
 
         # تنفيذ التحديث في MongoDB
-        result = users_collection.update_one(
+        result = users_col.update_one(
             {"email": user_email},
             {"$set": update_query}
         )
@@ -92,7 +92,7 @@ def link_device_to_user(user_email):
             return jsonify({"success": False, "message": "Device ID required"}), 400
 
         # تحديث سجل البصمة لإضافة إيميل المستخدم صاحب الجهاز
-        fingerprints_collection.update_one(
+        fingerprints_col.update_one(
             {"device_id": device_id},
             {"$set": {"owner_email": user_email, "linked_at": datetime.datetime.utcnow()}}
         )

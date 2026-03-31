@@ -1,9 +1,8 @@
 # routes/gems.py
-# routes/gems.py
 import datetime
 import uuid
 from flask import Blueprint, request, jsonify
-from models.mongo_db import gems_collection, transactions_collection
+from models.mongo_db import gems_col, transactions_col
 from middleware.auth_guard import token_required
 from services.gem_service import GemService
 
@@ -22,7 +21,7 @@ def get_gems_status(user_email):
     """
     try:
         # 1. البحث عن سجل الجواهر للمستخدم
-        user_gems = gems_collection.find_one({"email": user_email})
+        user_gems = gems_col.find_one({"email": user_email})
         
         # 2. إذا كان المستخدم جديداً (أول مرة يفتح البروفايل)
         if not user_gems:
@@ -35,10 +34,10 @@ def get_gems_status(user_email):
                 "referral_code": new_ref_code,
                 "created_at": datetime.datetime.utcnow()
             }
-            gems_collection.insert_one(user_gems)
+            gems_col.insert_one(user_gems)
             
             # تسجيل العملية في جدول المعاملات
-            transactions_collection.insert_one({
+            transactions_col.insert_one({
                 "email": user_email,
                 "amount": 50,
                 "type": "credit",
@@ -47,7 +46,7 @@ def get_gems_status(user_email):
             })
 
         # 3. جلب آخر 10 عمليات من السجل
-        raw_history = list(transactions_collection.find(
+        raw_history = list(transactions_col.find(
             {"email": user_email}, 
             {"_id": 0}
         ).sort("timestamp", -1).limit(10))
@@ -87,7 +86,7 @@ def add_referral_gems(user_email):
             return jsonify({"success": False, "message": "Referral code is required"}), 400
 
         # البحث عن صاحب الكود (المُحيل)
-        referrer = gems_collection.find_one({"referral_code": ref_code})
+        referrer = gems_col.find_one({"referral_code": ref_code})
         
         # التأكد من وجود الكود وأن المستخدم لا يحاول استخدام كوده الخاص
         if not referrer:
@@ -98,13 +97,13 @@ def add_referral_gems(user_email):
 
         # التحقق إذا كان هذا المستخدم قد استخدم كود إحالة سابقاً (اختياري حسب منطقك)
         # هنا سنقوم بإضافة 30 جوهرة للمُحيل (Referrer)
-        gems_collection.update_one(
+        gems_col.update_one(
             {"email": referrer['email']},
             {"$inc": {"balance": 30}}
         )
         
         # تسجيل العملية في سجل المُحيل
-        transactions_collection.insert_one({
+        transactions_col.insert_one({
             "email": referrer['email'],
             "amount": 30,
             "type": "credit",

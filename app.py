@@ -14,7 +14,7 @@ from config import config
 
 # --- 2. استيراد نماذج قاعدة البيانات ---
 # سيتم استخدام الاتصال المهيأ مسبقاً في models/mongo_db.py
-from models.mongo_db import fingerprints_collection, db
+from models.mongo_db import fingerprints_col, db
 
 # --- 3. استيراد المسارات (Blueprints) ---
 from routes.auth import auth_bp

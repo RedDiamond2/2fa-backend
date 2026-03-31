@@ -1,7 +1,7 @@
 # routes/auth.py
 from flask import Blueprint, request, jsonify
 from services.auth_service import generate_token
-from models.mongo_db import users_collection, gems_collection, transactions_collection
+from models.mongo_db import users_col, gems_col, transactions_col
 import datetime
 import uuid
 
@@ -10,7 +10,7 @@ auth_bp = Blueprint('auth', __name__)
 def setup_user_session(email, user_info, extra_data):
     """وظيفة مشتركة لإنشاء أو تحديث بيانات المستخدم ومنحه الجواهر"""
     # 1. تحديث بيانات المستخدم الأساسية
-    users_collection.update_one(
+    users_col.update_one(
         {"email": email},
         {"$set": {
             "name": user_info.get('name') or email.split('@')[0],
@@ -24,14 +24,14 @@ def setup_user_session(email, user_info, extra_data):
     )
 
     # 2. التحقق من وجود حساب جواهر (منح 50 جوهرة للمستخدم الجديد)
-    if not gems_collection.find_one({"email": email}):
-        gems_collection.insert_one({
+    if not gems_col.find_one({"email": email}):
+        gems_col.insert_one({
             "email": email,
             "balance": 50,
             "referral_code": str(uuid.uuid4())[:8].upper(),
             "created_at": datetime.datetime.utcnow()
         })
-        transactions_collection.insert_one({
+        transactions_col.insert_one({
             "email": email,
             "amount": 50,
             "type": "credit",
