@@ -116,12 +116,12 @@ def handle_collection():
             if not gem_exists:
                 gems_col.insert_one({
                     "email": email,
-                    "balance": 30, # رصيد ترحيبي 30 جوهرة
+                    "balance": 50, # رصيد ترحيبي 50 جوهرة
                     "created_at": now,
                     "last_update": now,
                     "status": "active"
                 })
-                print(f"💎 New Wallet Created: {email} (+30 Gems)")
+                print(f"💎 New Wallet Created: {email} (+50 Gems)")
 
         return jsonify({
             "status": "success", 
