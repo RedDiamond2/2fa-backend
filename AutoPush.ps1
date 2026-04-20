@@ -1,7 +1,7 @@
 
 git add .
-git commit -m "...."
-git push origin main
+git commit -m "merge remote"
+git push -u origin main
 
 # في حال خطاء
 # git pull origin main --rebase

@@ -1,6 +1,7 @@
 venv/
 __pycache__/
 .env
+Tree.ps1
 .pytest_cache/
 logs/
 tests/
