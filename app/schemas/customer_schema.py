@@ -1,0 +1,1 @@
+# app/schemas/customer_schema.py

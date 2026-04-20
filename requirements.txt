@@ -1,0 +1,7 @@
+fastapi
+uvicorn
+redis
+pytest
+pytest-asyncio
+openpyxl
+pymongo
