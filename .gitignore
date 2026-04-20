@@ -1,10 +1,10 @@
 venv/
 __pycache__/
 .env
-Tree.ps1
 .pytest_cache/
 logs/
-tests/
-Redis/
-test_parser.py
 c/
+tests/
+test_parser.py
+AutoPush.ps1
+Tree.ps1
