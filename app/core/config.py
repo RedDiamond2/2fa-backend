@@ -21,7 +21,6 @@ logging.basicConfig(
     handlers=[
         logging.StreamHandler(),
         # logging.FileHandler("logs/app.log") if os.path.exists("logs") else logging.StreamHandler()
-        handlers=[logging.StreamHandler()]
     ]
 )
 

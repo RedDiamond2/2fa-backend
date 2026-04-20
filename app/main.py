@@ -19,7 +19,6 @@ logging.getLogger("pymongo.serverSelection").setLevel(logging.WARNING)
 
 
 # ✅ مستوى logging العام
-logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("main")
 
 app = FastAPI(
