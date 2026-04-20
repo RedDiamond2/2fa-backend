@@ -20,7 +20,8 @@ logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     handlers=[
         logging.StreamHandler(),
-        logging.FileHandler("logs/app.log") if os.path.exists("logs") else logging.StreamHandler()
+        # logging.FileHandler("logs/app.log") if os.path.exists("logs") else logging.StreamHandler()
+        handlers=[logging.StreamHandler()]
     ]
 )
 

@@ -1,8 +1,11 @@
+#requirements.txt
 fastapi
-uvicorn
+uvicorn[standard]
+python-dotenv
+pymongo
 redis
+openpyxl
+
+# testing (اختياري)
 pytest
 pytest-asyncio
-openpyxl
-pymongo
-python-dotenv
