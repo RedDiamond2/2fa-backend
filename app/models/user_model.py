@@ -3,7 +3,31 @@
 from datetime import datetime
 from typing import Optional, Dict, Any, List
 from bson import ObjectId
+from app.core.database import get_database
 
+
+class UserRepository:
+    def __init__(self):
+        db = get_database()
+        self.model = UserModel(db)
+
+    async def create(self, user: Dict[str, Any]):
+        return await self.model.create_user(user)
+
+    async def find_by_email(self, email: str):
+        return await self.model.find_by_email(email)
+
+    async def find_by_id(self, user_id: str):
+        return await self.model.find_by_id(user_id)
+
+    async def update(self, user_id: str, data: Dict[str, Any]):
+        return await self.model.update_user(user_id, data)
+
+    async def delete(self, user_id: str):
+        return await self.model.delete_user(user_id)
+
+    async def list(self, limit: int = 50):
+        return await self.model.list_users(limit)
 
 # =========================
 # 👤 USER MODEL
@@ -74,13 +98,10 @@ class UserModel:
         return await cursor.to_list(length=limit)
 
 
-# =========================
-# 👤 REPOSITORY WRAPPER
-# =========================
-
 class UserRepository:
-    def __init__(self, db=None):
-        self.model = UserModel(db) if db else None
+    def __init__(self):
+        db = get_database()
+        self.model = UserModel(db)
 
     async def create(self, user: Dict[str, Any]):
         return await self.model.create_user(user)

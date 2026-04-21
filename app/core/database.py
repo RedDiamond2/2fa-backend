@@ -37,6 +37,18 @@ def get_orders_collection():
     return orders_collection
 
 
+def get_database():
+    """
+    Returns the active MongoDB database instance.
+    """
+    global db
+
+    if db is None:
+        logger.error("Database accessed before initialization")
+        raise RuntimeError("Database not initialized yet")
+
+    return db
+
 # =========================================
 # 🔹 INIT MONGO
 # =========================================

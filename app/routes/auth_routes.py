@@ -1,6 +1,6 @@
 # app/routes/auth_routes.py
 
-from fastapi import APIRouter, Depends, HTTPException, Header
+from fastapi import APIRouter, HTTPException, Header
 from typing import Optional, Dict, Any
 
 from app.services.auth_service import AuthService
@@ -13,7 +13,6 @@ auth_service = AuthService()
 # =========================
 # 🔐 REGISTER
 # =========================
-
 @router.post("/register")
 async def register(payload: Dict[str, Any]):
     email = payload.get("email")
@@ -34,13 +33,17 @@ async def register(payload: Dict[str, Any]):
     if not result.get("success"):
         raise HTTPException(status_code=400, detail=result.get("message"))
 
-    return result
+    return {
+        "success": True,
+        "user": result.get("user"),
+        "access_token": result.get("access_token"),
+        "token_type": "bearer"
+    }
 
 
 # =========================
 # 🔐 LOGIN
 # =========================
-
 @router.post("/login")
 async def login(payload: Dict[str, Any]):
     email = payload.get("email")
@@ -59,13 +62,17 @@ async def login(payload: Dict[str, Any]):
     if not result.get("success"):
         raise HTTPException(status_code=401, detail=result.get("message"))
 
-    return result
+    return {
+        "success": True,
+        "user": result.get("user"),
+        "access_token": result.get("access_token"),
+        "token_type": "bearer"
+    }
 
 
 # =========================
 # 👤 CURRENT USER
 # =========================
-
 @router.get("/me")
 async def get_me(authorization: Optional[str] = Header(None)):
     if not authorization:

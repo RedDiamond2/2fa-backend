@@ -6,6 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.core.config import settings
 from app.services.usage_service import ensure_usage_indexes
 from app.routes import admin_routes # ⬅️ هنا
+from app.routes import auth_routes # ✅ AUTH ROUTES REGISTERED
 from app.routes.export_routes import router as export_router
 from app.routes import visitor_routes
 from app.routes import suggestions
@@ -29,6 +30,7 @@ app = FastAPI(
 app.include_router(order_routes.router)
 app.include_router(customer_routes.router)
 app.include_router(admin_routes.router) # ⬅️ هنا
+app.include_router(auth_routes.router) # ✅ AUTH ROUTES ACTIVATED
 app.include_router(export_router)
 app.include_router(visitor_routes.router)
 app.include_router(suggestions.router)
