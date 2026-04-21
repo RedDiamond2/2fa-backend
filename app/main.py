@@ -5,12 +5,15 @@ from app.routes import order_routes, customer_routes
 from fastapi.middleware.cors import CORSMiddleware
 from app.core.config import settings
 from app.services.usage_service import ensure_usage_indexes
-from app.routes import admin_routes # ⬅️ هنا
-from app.routes import auth_routes # ✅ AUTH ROUTES REGISTERED
+from app.routes import admin_routes
+from app.routes import auth_routes
 from app.routes.export_routes import router as export_router
 from app.routes import visitor_routes
 from app.routes import suggestions
 from app.routes import comment_routes
+import sys
+
+print("Python:", sys.version)
 
 # 🔴 حل فوضى MongoDB (pymongo spam)
 logging.getLogger("pymongo").setLevel(logging.WARNING)
