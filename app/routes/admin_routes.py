@@ -1,41 +1,34 @@
-from fastapi import APIRouter, HTTPException, Header
-from app.core.config import settings
-from pymongo import MongoClient
+# app/routes/admin_routes.py
+
+from fastapi import APIRouter, HTTPException, Header, Depends
+from app.core.database import get_database
 from datetime import datetime
 import os
 import logging
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 
-client = MongoClient(settings.MONGO_URL)
-db = client[settings.DB_NAME]
-
 logger = logging.getLogger("admin_routes")
 
 
-@router.delete("/clear-collections")
-def clear_collections(x_admin_secret: str = Header(None)):
-    """
-    🧹 Clear all collections except comments (SAFE MODE)
-    """
+def get_db():
+    return get_database()
 
+
+@router.delete("/clear-collections")
+async def clear_collections(x_admin_secret: str = Header(None), db=Depends(get_db)):
     ADMIN_SECRET = os.getenv("ADMIN_SECRET", "1234")
 
-    # 🔐 Security check
-    if x_admin_secret != ADMIN_SECRET:
+    if not x_admin_secret or x_admin_secret != ADMIN_SECRET:
         raise HTTPException(status_code=403, detail="Unauthorized")
 
     try:
-        # 🧠 All collections in DB
-        all_collections = db.list_collection_names()
+        all_collections = await db.list_collection_names()
 
-        # 🚫 Never delete comments visitors
-        excluded_collections = {"comments","visitors"}
+        excluded_collections = {"comments", "visitors"}
 
-        # 🎯 Target collections = everything except excluded
         target_collections = [
-            col for col in all_collections
-            if col not in excluded_collections
+            col for col in all_collections if col not in excluded_collections
         ]
 
         result = {}
@@ -45,9 +38,8 @@ def clear_collections(x_admin_secret: str = Header(None)):
             f"Target: {target_collections}"
         )
 
-        # 🧹 Delete data safely
         for name in target_collections:
-            deleted = db[name].delete_many({})
+            deleted = await db[name].delete_many({})
             result[name] = deleted.deleted_count
 
             logger.info(f"[ADMIN] Cleared {name}: {deleted.deleted_count} docs")
@@ -56,9 +48,9 @@ def clear_collections(x_admin_secret: str = Header(None)):
             "success": True,
             "message": "Collections cleared successfully (comments preserved)",
             "excluded": list(excluded_collections),
-            "details": result
+            "details": result,
         }
 
     except Exception as e:
         logger.error(f"[ADMIN] Clear failed: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")

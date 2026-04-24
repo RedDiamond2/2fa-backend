@@ -2,56 +2,47 @@
 
 from fastapi import APIRouter, HTTPException, Header
 from typing import Optional, Dict, Any
+from pydantic import BaseModel, EmailStr
 
-from app.services.auth_service import AuthService
+from app.services.auth_service import get_auth_service
 
 router = APIRouter(prefix="/auth", tags=["Auth"])
 
-auth_service = AuthService()
+auth_service = get_auth_service()
 
 
-# =========================
-# 🔐 REGISTER
-# =========================
+class RegisterInput(BaseModel):
+    email: EmailStr
+    password: str
+    name: Optional[str] = None
+    fingerprint: Optional[str] = None
+
+
 @router.post("/register")
-async def register(payload: Dict[str, Any]):
-    email = payload.get("email")
-    password = payload.get("password")
-    name = payload.get("name")
-    fingerprint = payload.get("fingerprint")
-
-    if not email or not password:
-        raise HTTPException(status_code=400, detail="Email and password required")
+async def register(payload: RegisterInput):
 
     result = await auth_service.register_user(
-        email=email,
-        password=password,
-        name=name,
-        fingerprint=fingerprint
+        email=payload.email,
+        password=payload.password,
+        name=payload.name,
+        fingerprint=payload.fingerprint
     )
 
     if not result.get("success"):
         raise HTTPException(status_code=400, detail=result.get("message"))
 
-    return {
-        "success": True,
-        "user": result.get("user"),
-        "access_token": result.get("access_token"),
-        "token_type": "bearer"
-    }
+    return result
 
 
-# =========================
-# 🔐 LOGIN
-# =========================
 @router.post("/login")
 async def login(payload: Dict[str, Any]):
+
     email = payload.get("email")
     password = payload.get("password")
     fingerprint = payload.get("fingerprint")
 
     if not email or not password:
-        raise HTTPException(status_code=400, detail="Email and password required")
+        raise HTTPException(status_code=400, detail="Missing fields")
 
     result = await auth_service.login_user(
         email=email,
@@ -62,19 +53,12 @@ async def login(payload: Dict[str, Any]):
     if not result.get("success"):
         raise HTTPException(status_code=401, detail=result.get("message"))
 
-    return {
-        "success": True,
-        "user": result.get("user"),
-        "access_token": result.get("access_token"),
-        "token_type": "bearer"
-    }
+    return result
 
 
-# =========================
-# 👤 CURRENT USER
-# =========================
 @router.get("/me")
-async def get_me(authorization: Optional[str] = Header(None)):
+async def me(authorization: Optional[str] = Header(None)):
+
     if not authorization:
         raise HTTPException(status_code=401, detail="Missing token")
 
@@ -85,7 +69,4 @@ async def get_me(authorization: Optional[str] = Header(None)):
     if not user:
         raise HTTPException(status_code=401, detail="Invalid token")
 
-    return {
-        "success": True,
-        "user": user
-    }
+    return {"success": True, "user": user}

@@ -1,57 +1,75 @@
 # app/main.py
-import logging
-from fastapi import FastAPI
-from app.routes import order_routes, customer_routes
-from fastapi.middleware.cors import CORSMiddleware
-from app.core.config import settings
-from app.services.usage_service import ensure_usage_indexes
-from app.routes import admin_routes
-from app.routes import auth_routes
-from app.routes.export_routes import router as export_router
-from app.routes import visitor_routes
-from app.routes import suggestions
-from app.routes import comment_routes
 import sys
+import logging
+from contextlib import asynccontextmanager
+
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+
+from app.core.config import settings
+from app.core.database import init_mongo_client, init_mongo_indexes
+
+from app.services.usage_service import ensure_usage_indexes
+
+from app.routes import (
+    order_routes,
+    customer_routes,
+    admin_routes,
+    auth_routes,
+    visitor_routes,
+    suggestions,
+    comment_routes,
+)
+
+from app.routes.export_routes import router as export_router
 
 print("Python:", sys.version)
 
-# 🔴 حل فوضى MongoDB (pymongo spam)
 logging.getLogger("pymongo").setLevel(logging.WARNING)
-logging.getLogger("pymongo.topology").setLevel(logging.WARNING)
-logging.getLogger("pymongo.connection").setLevel(logging.WARNING)
-logging.getLogger("pymongo.serverSelection").setLevel(logging.WARNING)
-
-
-# ✅ مستوى logging العام
 logger = logging.getLogger("main")
 
-app = FastAPI(
-    title=settings.APP_NAME,
-    version=settings.VERSION
-)
 
-app.include_router(order_routes.router)
-app.include_router(customer_routes.router)
-app.include_router(admin_routes.router) # ⬅️ هنا
-app.include_router(auth_routes.router) # ✅ AUTH ROUTES ACTIVATED
-app.include_router(export_router)
-app.include_router(visitor_routes.router)
-app.include_router(suggestions.router)
-app.include_router(comment_routes.router)
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    logger.info("🚀 backend starting...")
+
+    try:
+        init_mongo_client()
+        await init_mongo_indexes()
+        ensure_usage_indexes()
+        logger.info("✅ startup complete")
+    except Exception as e:
+        logger.warning(f"startup partial: {e}")
+
+    yield
+
+    logger.info("shutdown")
+
+
+app = FastAPI(title=settings.APP_NAME, version=settings.VERSION, lifespan=lifespan)
+
+
+allow_origins = settings.CORS_ORIGINS.split(",")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
+
+app.include_router(order_routes.router)
+app.include_router(customer_routes.router)
+app.include_router(admin_routes.router)
+app.include_router(auth_routes.router)
+app.include_router(export_router)
+app.include_router(visitor_routes.router)
+app.include_router(suggestions.router)
+app.include_router(comment_routes.router)
+
+
 @app.get("/")
 def root():
-    return {"message": "CRM API is running "}
-    
-@app.on_event("startup")
-def startup():
-    logger.info("Async Queue System READY")
-    ensure_usage_indexes()
+    return {"message": "CRM API running", "status": "ok"}

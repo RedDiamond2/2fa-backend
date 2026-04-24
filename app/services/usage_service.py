@@ -3,16 +3,19 @@ import logging
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 from uuid import uuid4
-from app.core.database import db
 
 logger = logging.getLogger("usage_service")
 
 usage_collection = None
 
+
 def get_collection():
     global usage_collection
-    if usage_collection is None and db is not None:
+
+    if usage_collection is None:
+        db = get_database()
         usage_collection = db["usage_logs"]
+
     return usage_collection
 
 
@@ -23,14 +26,21 @@ def ensure_usage_indexes():
         logger.warning("MongoDB not connected - skipping index creation")
         return
 
-    collection.create_index([("timestamp", -1)])
-    collection.create_index([("event", 1), ("timestamp", -1)])
-    collection.create_index([("trace_id", 1), ("timestamp", -1)])
-    collection.create_index([("conversation_id", 1), ("timestamp", -1)])
-    collection.create_index([("customer_id", 1), ("timestamp", -1)])
-    collection.create_index([("order_id", 1), ("timestamp", -1)])
-    collection.create_index([("status", 1), ("timestamp", -1)])
-    collection.create_index([("decision", 1), ("timestamp", -1)])
+    try:
+        collection.create_index([("timestamp", -1)])
+        collection.create_index([("event", 1), ("timestamp", -1)])
+        collection.create_index([("trace_id", 1), ("timestamp", -1)])
+        collection.create_index([("conversation_id", 1), ("timestamp", -1)])
+        collection.create_index([("customer_id", 1), ("timestamp", -1)])
+        collection.create_index([("order_id", 1), ("timestamp", -1)])
+        collection.create_index([("status", 1), ("timestamp", -1)])
+        collection.create_index([("decision", 1), ("timestamp", -1)])
+
+        logger.info("Usage indexes created")
+
+    except Exception as e:
+        logger.warning(f"Index creation failed: {e}")
+
 
 def _utc_now():
     return datetime.now(timezone.utc)
@@ -109,7 +119,7 @@ def log_event(
             return None
 
         result = collection.insert_one(doc)
-        
+
         return str(result.inserted_id)
     except Exception as e:
         logger.warning(f"Usage log failed: {str(e)}")

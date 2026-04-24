@@ -1,16 +1,14 @@
 from fastapi import APIRouter
 from fastapi.responses import StreamingResponse, Response
 from app.services.export_service import export_json, export_excel
-from app.core.database import db
 
 router = APIRouter()
 
 
 def format_order(o):
-    items_text = ", ".join([
-        f"{i.get('product')} x{i.get('quantity')}"
-        for i in o.get("items", [])
-    ])
+    items_text = ", ".join(
+        [f"{i.get('product')} x{i.get('quantity')}" for i in o.get("items", [])]
+    )
 
     total = o.get("total_amount", 0)
     paid = o.get("paid_amount", 0)
@@ -26,7 +24,7 @@ def format_order(o):
         "total": total,
         "paid": paid,
         "remaining": max(total - paid, 0),
-        "date": o.get("timestamp", "")[:10]
+        "date": o.get("timestamp", "")[:10],
     }
 
 
@@ -44,17 +42,14 @@ async def export_data(format: str = "json"):
 
     # ✅ JSON
     if format == "json":
-        return Response(
-            content=export_json(formatted),
-            media_type="application/json"
-        )
+        return Response(content=export_json(formatted), media_type="application/json")
 
     # ✅ Excel
     if format == "excel":
         file = export_excel(formatted)
         return StreamingResponse(
             file,
-            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         )
 
     return {"error": "Invalid format"}

@@ -1,7 +1,6 @@
 # app/routes/comment_routes.py
 
 from fastapi import APIRouter, HTTPException
-from app.core.database import db
 from uuid import uuid4
 from datetime import datetime
 

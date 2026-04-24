@@ -7,6 +7,7 @@ import httpx
 
 router = APIRouter()
 
+
 def get_client_ip(request: Request):
     forwarded = request.headers.get("x-forwarded-for")
     if forwarded:
@@ -16,19 +17,18 @@ def get_client_ip(request: Request):
 
 async def get_geo(ip):
     try:
-        async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient(timeout=3.0) as client:  # ✅ stability
             res = await client.get(f"http://ip-api.com/json/{ip}")
             return res.json()
     except:
         return {}
-        
+
+
 @router.post("/visitor/init")
 async def init_visitor(request: Request, body: dict):
     ip = get_client_ip(request)
     geo = await get_geo(ip)
 
-
-    
     visitor_data = {
         "fingerprint": body.get("fingerprint"),
         "user_agent": request.headers.get("user-agent"),
@@ -42,6 +42,9 @@ async def init_visitor(request: Request, body: dict):
     }
 
     visitor = await create_or_get_visitor(visitor_data)
-    visitor["_id"] = str(visitor["_id"])
+
+    # ✅ SAFE _id handling
+    if visitor and "_id" in visitor:
+        visitor["_id"] = str(visitor["_id"])
 
     return {"success": True, "visitor": visitor}

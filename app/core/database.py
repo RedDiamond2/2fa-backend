@@ -2,17 +2,13 @@
 
 import uuid
 import logging
-from pymongo import MongoClient
+from motor.motor_asyncio import AsyncIOMotorClient
 from pymongo.errors import ConnectionFailure
 from app.core.config import settings
 
 logger = logging.getLogger("database")
 
-# =========================================
-# 🔹 MongoDB Connection
-# =========================================
-
-client = None
+client: AsyncIOMotorClient | None = None
 db = None
 
 orders_collection = None
@@ -20,83 +16,72 @@ customers_collection = None
 learning_collection = None
 memory_collection = None
 conversations_collection = None
-suggestions_collection = None  # ✅ NEW
+suggestions_collection = None
 
 
-# =========================================
-# 🔹 Helpers
-# =========================================
-
-def generate_id() -> str:
+def generate_id():
     return str(uuid.uuid4())
 
 
-def get_orders_collection():
-    if orders_collection is None:
-        raise Exception("DB not initialized")
-    return orders_collection
+def init_mongo_client():
+    global client, db
+    global orders_collection, customers_collection
+    global learning_collection, memory_collection
+    global conversations_collection, suggestions_collection
+
+    if not settings.MONGO_URL:
+        logger.error("MONGO_URI missing")
+        return
+
+    client = AsyncIOMotorClient(
+        settings.MONGO_URL,
+        serverSelectionTimeoutMS=5000,
+        maxPoolSize=50,
+    )
+
+    db = client[settings.DB_NAME]
+
+    orders_collection = db["orders"]
+    customers_collection = db["customers"]
+    learning_collection = db["learning"]
+    memory_collection = db["memory"]
+    conversations_collection = db["conversations"]
+    suggestions_collection = db["suggestions"]
 
 
 def get_database():
-    """
-    Returns the active MongoDB database instance.
-    """
     global db
 
     if db is None:
-        logger.error("Database accessed before initialization")
+        init_mongo_client()
+
+    if db is None:
         raise RuntimeError("Database not initialized yet")
 
     return db
 
-# =========================================
-# 🔹 INIT MONGO
-# =========================================
 
-def init_mongo():
-    global client, db
-    global orders_collection, customers_collection, learning_collection
-    global memory_collection, conversations_collection
-    global suggestions_collection  # ✅ NEW
+async def init_mongo_indexes():
+    global client
 
-    if not settings.MONGO_URL:
-        logger.error("MONGO_URI is not set")
+    if client is None:
+        init_mongo_client()
+
+    if db is None:
+        logger.warning("MongoDB not ready")
         return
 
     try:
-        client = MongoClient(
-            settings.MONGO_URL,
-            serverSelectionTimeoutMS=5000,
-            maxPoolSize=50
-        )
+        await client.admin.command("ping")
 
-        client.admin.command("ping")
+        await orders_collection.create_index("phone")
+        await customers_collection.create_index("phone", unique=True)
+        await memory_collection.create_index("phone", unique=True)
+        await conversations_collection.create_index("id", unique=True)
+        await suggestions_collection.create_index("visitor_id")
+        await db["visitors"].create_index("fingerprint", unique=True)
 
-        db = client[settings.DB_NAME]
-
-        # 🔹 Collections
-        orders_collection = db["orders"]
-        customers_collection = db["customers"]
-        learning_collection = db["learning"]
-        memory_collection = db["memory"]
-        conversations_collection = db["conversations"]
-        suggestions_collection = db["suggestions"]  # ✅ NEW
-
-        # 🔥 Indexes (Production)
-        orders_collection.create_index("phone")
-        customers_collection.create_index("phone", unique=True)
-        memory_collection.create_index("phone", unique=True)
-        conversations_collection.create_index("id", unique=True)
-
-        # ✅ NEW: suggestions indexes
-        suggestions_collection.create_index("visitor_id")
-        suggestions_collection.create_index("created_at")
-
-        logger.info("MongoDB connected successfully to Atlas")
+        logger.info("MongoDB connected")
 
     except ConnectionFailure as e:
-        logger.error(f"MongoDB connection failed: {e}")
-
-
-# 🚀 init
-init_mongo()
+        logger.warning(f"MongoDB connection failed: {e}")
