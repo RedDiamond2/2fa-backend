@@ -39,7 +39,7 @@ def init_mongo_client():
     global learning_collection, memory_collection
     global conversations_collection, suggestions_collection
 
-    if not settings.MONGO_URL:
+    if not settings.MONGO_URI:
         logger.error("❌ MONGO_URL missing")
         return
 
@@ -47,7 +47,7 @@ def init_mongo_client():
         return
 
     client = AsyncIOMotorClient(
-        settings.MONGO_URL,
+        settings.MONGO_URI,
         serverSelectionTimeoutMS=5000,
         maxPoolSize=50,
         retryWrites=True,
