@@ -19,8 +19,18 @@ conversations_collection = None
 suggestions_collection = None
 
 
-def generate_id():
+# =========================================
+# 🟢 ID GENERATOR
+# =========================================
+
+
+def generate_id() -> str:
     return str(uuid.uuid4())
+
+
+# =========================================
+# 🟢 INIT MONGO CLIENT
+# =========================================
 
 
 def init_mongo_client():
@@ -30,13 +40,17 @@ def init_mongo_client():
     global conversations_collection, suggestions_collection
 
     if not settings.MONGO_URL:
-        logger.error("MONGO_URI missing")
+        logger.error("❌ MONGO_URL missing")
+        return
+
+    if client is not None:
         return
 
     client = AsyncIOMotorClient(
         settings.MONGO_URL,
         serverSelectionTimeoutMS=5000,
         maxPoolSize=50,
+        retryWrites=True,
     )
 
     db = client[settings.DB_NAME]
@@ -47,6 +61,13 @@ def init_mongo_client():
     memory_collection = db["memory"]
     conversations_collection = db["conversations"]
     suggestions_collection = db["suggestions"]
+
+    logger.info("✅ Mongo initialized")
+
+
+# =========================================
+# 🟢 GET DATABASE
+# =========================================
 
 
 def get_database():
@@ -61,8 +82,38 @@ def get_database():
     return db
 
 
+# =========================================
+# 🟢 GET COLLECTIONS SAFE
+# =========================================
+
+
+def get_collections():
+    global db
+
+    if db is None:
+        init_mongo_client()
+
+    if db is None:
+        raise RuntimeError("Database not initialized")
+
+    return {
+        "db": db,
+        "orders": db["orders"],
+        "customers": db["customers"],
+        "learning": db["learning"],
+        "memory": db["memory"],
+        "conversations": db["conversations"],
+        "suggestions": db["suggestions"],
+    }
+
+
+# =========================================
+# 🟢 INDEX INITIALIZATION
+# =========================================
+
+
 async def init_mongo_indexes():
-    global client
+    global client, db
 
     if client is None:
         init_mongo_client()
@@ -74,14 +125,29 @@ async def init_mongo_indexes():
     try:
         await client.admin.command("ping")
 
+        # ORDERS
         await orders_collection.create_index("phone")
-        await customers_collection.create_index("phone", unique=True)
-        await memory_collection.create_index("phone", unique=True)
+
+        # CUSTOMERS (important indexes)
+        await customers_collection.create_index("phone")
+        await customers_collection.create_index("fingerprint", unique=True)
+        await customers_collection.create_index("email_canonical", sparse=True)
+        await customers_collection.create_index("phone_normalized", sparse=True)
+
+        # MEMORY
+        await memory_collection.create_index("phone", unique=True, sparse=True)
+
+        # CONVERSATIONS
         await conversations_collection.create_index("id", unique=True)
+
+        # SUGGESTIONS
         await suggestions_collection.create_index("visitor_id")
+        await suggestions_collection.create_index("created_at")
+
+        # VISITORS
         await db["visitors"].create_index("fingerprint", unique=True)
 
-        logger.info("MongoDB connected")
+        logger.info("✅ MongoDB connected + indexes ready")
 
     except ConnectionFailure as e:
-        logger.warning(f"MongoDB connection failed: {e}")
+        logger.warning(f"❌ MongoDB connection failed: {e}")

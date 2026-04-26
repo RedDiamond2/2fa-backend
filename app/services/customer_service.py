@@ -9,20 +9,21 @@ from datetime import datetime
 # 🟢 NORMALIZATION HELPERS
 # =========================================
 
+
 def normalize_phone(phone: Optional[str]) -> Optional[str]:
     if not phone:
         return None
 
     phone = str(phone).strip()
-
-    # إزالة المسافات والرموز
     phone = "".join(filter(str.isdigit, phone))
 
-    # الجزائر: 213xxxxxxxxx → 0xxxxxxxxx
     if phone.startswith("213") and len(phone) == 12:
         phone = "0" + phone[3:]
 
-    return phone if len(phone) == 10 else None
+    if len(phone) != 10:
+        return None
+
+    return phone
 
 
 def normalize_name(name: Optional[str]) -> Optional[str]:
@@ -34,7 +35,6 @@ def normalize_name(name: Optional[str]) -> Optional[str]:
     if len(name) < 3:
         return None
 
-    # إزالة garbage
     if name in ["unknown", "???", "⚠️"]:
         return None
 
@@ -48,7 +48,7 @@ def normalize_location(location: Any) -> Optional[str]:
     if isinstance(location, dict):
         province = location.get("province")
         if province:
-            return province.lower()
+            return str(province).strip().lower()
 
     if isinstance(location, str):
         return location.strip().lower()
@@ -60,17 +60,11 @@ def normalize_location(location: Any) -> Optional[str]:
 # 🟢 FINGERPRINT GENERATION
 # =========================================
 
+
 def generate_fingerprint(
-    phone: Optional[str],
-    name: Optional[str],
-    location: Optional[str]
+    phone: Optional[str], name: Optional[str], location: Optional[str]
 ) -> str:
-    """
-    توليد هوية فريدة للعميل
-    """
-
     base = f"{phone or ''}|{name or ''}|{location or ''}"
-
     return hashlib.sha256(base.encode()).hexdigest()
 
 
@@ -78,60 +72,58 @@ def generate_fingerprint(
 # 🟢 CUSTOMER BUILDER
 # =========================================
 
-def build_customer(parsed: Dict[str, Any]) -> Dict[str, Any]:
-    """
-    بناء كائن العميل من parsed data
-    """
 
+def build_customer(parsed: Dict[str, Any]) -> Dict[str, Any]:
     phone = normalize_phone(parsed.get("phone"))
     name = normalize_name(parsed.get("name"))
     location = normalize_location(parsed.get("location"))
 
     fingerprint = generate_fingerprint(phone, name, location)
 
-    customer = {
+    now = datetime.utcnow()
+
+    return {
         "fingerprint": fingerprint,
         "phone": phone,
         "name": name,
         "location": location,
-
-        # metadata
-        "created_at": datetime.utcnow(),
-        "updated_at": datetime.utcnow(),
-
-        # analytics
+        "created_at": now,
+        "updated_at": now,
         "order_count": 0,
         "last_order_at": None,
     }
 
-    return customer
-
 
 # =========================================
-# 🟢 CUSTOMER MERGE (CRITICAL)
+# 🟢 CUSTOMER MERGE (SAFE + STRONG)
 # =========================================
 
-def merge_customer(existing: Dict[str, Any], new_data: Dict[str, Any]) -> Dict[str, Any]:
-    """
-    دمج بيانات العميل (ذكي)
-    """
 
+def merge_customer(
+    existing: Dict[str, Any], new_data: Dict[str, Any]
+) -> Dict[str, Any]:
     updated = existing.copy()
 
-    # 🔁 name (keep الأفضل)
-    if new_data.get("name") and len(new_data["name"]) > len(existing.get("name", "")):
-        updated["name"] = new_data["name"]
+    new_name = normalize_name(new_data.get("name"))
+    new_phone = normalize_phone(new_data.get("phone"))
+    new_location = normalize_location(new_data.get("location"))
 
-    # 🔁 phone (always trust normalized)
-    if new_data.get("phone"):
-        updated["phone"] = new_data["phone"]
+    # name → keep الأفضل
+    if new_name and (
+        not existing.get("name") or len(new_name) > len(existing.get("name", ""))
+    ):
+        updated["name"] = new_name
 
-    # 🔁 location
-    if new_data.get("location"):
-        updated["location"] = new_data["location"]
+    # phone → overwrite if valid
+    if new_phone:
+        updated["phone"] = new_phone
 
-    # 🔁 stats
-    updated["order_count"] = existing.get("order_count", 0) + 1
+    # location
+    if new_location:
+        updated["location"] = new_location
+
+    # stats
+    updated["order_count"] = int(existing.get("order_count", 0)) + 1
     updated["last_order_at"] = datetime.utcnow()
     updated["updated_at"] = datetime.utcnow()
 
@@ -139,66 +131,54 @@ def merge_customer(existing: Dict[str, Any], new_data: Dict[str, Any]) -> Dict[s
 
 
 # =========================================
-# 🟢 FIND OR CREATE LOGIC (CORE)
+# 🟢 FIND OR CREATE LOGIC (PRODUCTION SAFE)
 # =========================================
 
-async def find_or_create_customer(parsed: Dict[str, Any], db) -> Dict[str, Any]:
-    """
-    أهم function في النظام:
-    - يبحث عن العميل
-    - أو ينشئ واحد جديد
-    """
 
+async def find_or_create_customer(parsed: Dict[str, Any], db) -> Dict[str, Any]:
     phone = normalize_phone(parsed.get("phone"))
     name = normalize_name(parsed.get("name"))
     location = normalize_location(parsed.get("location"))
 
     fingerprint = generate_fingerprint(phone, name, location)
 
+    customers_col = db["customers"]
+
     # =========================
-    # 🔍 1. البحث بالـ fingerprint
+    # 🔍 1. fingerprint
     # =========================
-    existing = await db.customers.find_one({"fingerprint": fingerprint})
+    existing = await customers_col.find_one({"fingerprint": fingerprint})
 
     if existing:
-        updated = merge_customer(existing, {
-            "phone": phone,
-            "name": name,
-            "location": location
-        })
-
-        await db.customers.update_one(
-            {"_id": existing["_id"]},
-            {"$set": updated}
+        updated = merge_customer(
+            existing, {"phone": phone, "name": name, "location": location}
         )
+
+        await customers_col.update_one({"_id": existing["_id"]}, {"$set": updated})
 
         return updated
 
     # =========================
-    # 🔍 2. fallback: البحث بالهاتف
+    # 🔍 2. phone fallback
     # =========================
     if phone:
-        existing = await db.customers.find_one({"phone": phone})
+        existing = await customers_col.find_one({"phone": phone})
 
         if existing:
-            updated = merge_customer(existing, {
-                "phone": phone,
-                "name": name,
-                "location": location
-            })
-
-            await db.customers.update_one(
-                {"_id": existing["_id"]},
-                {"$set": updated}
+            updated = merge_customer(
+                existing, {"phone": phone, "name": name, "location": location}
             )
+
+            await customers_col.update_one({"_id": existing["_id"]}, {"$set": updated})
 
             return updated
 
     # =========================
-    # 🆕 3. create new
+    # 🆕 3. create
     # =========================
     new_customer = build_customer(parsed)
 
-    await db.customers.insert_one(new_customer)
+    result = await customers_col.insert_one(new_customer)
+    new_customer["_id"] = result.inserted_id
 
     return new_customer

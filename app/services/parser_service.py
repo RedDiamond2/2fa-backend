@@ -1,30 +1,33 @@
 # app/services/parser_service.py
 
-import re
 import asyncio
 import logging
-from typing import List, Dict, Optional
-from app.services.location_service import infer_location, LOCATION_DB
-from app.services.confidence_service import compute_confidence
-from app.services.context_service import build_context, get_conversation_history, save_conversation
-from app.services.memory_service import enrich_with_memory
-from app.services.learning_service import get_learning_cases
-from app.services.warning_service import generate_warnings
-from app.services.usage_service import log_event
+import re
+from typing import Any, Dict, List, Optional
+
+from app.schemas.parser_schema import Address, Item, ParsedOrder
+from app.services.location_service import infer_location
 from app.services.payment_service import detect_payment
-from app.schemas.parser_schema import ParsedOrder, Item, Address
+from app.services.usage_service import log_event
 from app.utils.phone_utils import clean_phone
-from app.services.learning_service import find_best_learning_match
 
 logger = logging.getLogger("parser_service")
 
 # ================================
-# 🧠 Dictionaries & Constants
+# 🧠 CONSTANTS
 # ================================
 NUMBER_MAP = {
-    "واحد": 1, "وحدة": 1, "زوج": 2, "جوج": 2,
-    "ثلاثة": 3, "ثلاث": 3, "اربعة": 4, "خمسة": 5,
-    "ستة": 6, "سبعة": 7, "ثمانية": 8
+    "واحد": 1,
+    "وحدة": 1,
+    "زوج": 2,
+    "جوج": 2,
+    "ثلاثة": 3,
+    "ثلاث": 3,
+    "اربعة": 4,
+    "خمسة": 5,
+    "ستة": 6,
+    "سبعة": 7,
+    "ثمانية": 8,
 }
 
 PRODUCTS_MAP = {
@@ -32,818 +35,596 @@ PRODUCTS_MAP = {
     "صباط": ["صباط", "حذاء", "شوز", "سباط"],
     "قميص": ["قميص", "شميز", "chemise"],
     "سروال": ["سروال", "جين", "جينز", "pantalon"],
-    "فستان": ["فستان"]
+    "فستان": ["فستان"],
 }
 
 COLORS = {
-    "نوار": "أسود", "اسود": "أسود", "أبيض": "أبيض", "بيض": "أبيض",
-    "حمر": "أحمر", "احمر": "أحمر", "جون": "أصفر", "اصفر": "أصفر",
-    "ازرق": "أزرق", "أزرق": "أزرق"
+    "نوار": "أسود",
+    "اسود": "أسود",
+    "أبيض": "أبيض",
+    "بيض": "أبيض",
+    "حمر": "أحمر",
+    "احمر": "أحمر",
+    "جون": "أصفر",
+    "اصفر": "أصفر",
+    "ازرق": "أزرق",
+    "أزرق": "أزرق",
 }
 
 SIZES = ["xs", "s", "m", "l", "xl", "xxl", "2xl", "3xl"]
 
 NAME_STOPWORDS = [
-    "السلام", "عليكم", "مرحبا", "نحب", "حاب", "نحتاج",
-    "بغيت", "زيدني", "كاين", "واحد", "زوج", "خويا", "يا", "ألو"
+    "السلام",
+    "عليكم",
+    "مرحبا",
+    "نحب",
+    "حاب",
+    "نحتاج",
+    "بغيت",
+    "زيدني",
+    "كاين",
+    "واحد",
+    "زوج",
+    "خويا",
+    "يا",
+    "ألو",
 ]
 
-IGNORE_NUM_CONTEXT = ["باب", "رقم", "بناية", "عمارة"]
-CONTINUATION_WORDS = ["زيدني", "زيد", "حتى", "وزيد", "اضف"]
 
 # ================================
-# 🧹 Helpers
+# 🧹 UTILS
 # ================================
-
 def normalize(text: str) -> str:
     text = (text or "").lower()
     text = re.sub(r"[^\w\s\u0600-\u06FF]", " ", text)
-    return text
+    text = re.sub(r"\s+", " ", text)
+    return text.strip()
 
-def safe_infer_location(text: str) -> Dict:
+
+def _safe_text(value: Any) -> str:
+    return "" if value is None else str(value).strip()
+
+
+def _safe_list(value: Any) -> List[Any]:
+    return value if isinstance(value, list) else []
+
+
+def safe_infer_location(text: str) -> Dict[str, Any]:
     try:
-        return infer_location(text)
+        return infer_location(text) or {}
     except Exception as e:
         logger.error(f"LOCATION ERROR: {e}")
         return {}
 
-# ================================
-# 🧠 INTENT DETECTION
-# ================================
 
+# ================================
+# 🧠 INTENT
+# ================================
 def detect_intent(text: str) -> str:
     text = normalize(text)
-    if any(w in text for w in ["بدل", "غير", "تغيير"]):
-        return "update"
-    if any(w in text for w in ["زيد", "اضف"]):
-        return "add"
-    if any(w in text for w in ["احذف", "نحي", "الغاء"]):
+    if "احذف" in text or "نحي" in text or "الغاء" in text:
         return "remove"
-    if any(w in text for w in ["نأكد", "أكد", "confirm"]):
+    if "بدل" in text or "غير" in text or "تغيير" in text:
+        return "update"
+    if "زيد" in text or "اضف" in text:
+        return "add"
+    if "أكد" in text or "نأكد" in text or "confirm" in text:
         return "confirm"
     return "new"
 
-# ================================
-# 🔢 Logic Engines
-# ================================
 
-def classify_number(num_str: str) -> Dict:
+# ================================
+# 🔢 NUMBER
+# ================================
+def classify_number(num: str) -> Dict[str, Any]:
     try:
-        num = int(num_str)
-    except:
+        n = int(num)
+    except (TypeError, ValueError):
         return {"type": "ignore", "value": None}
 
-    if len(num_str) in [9, 10, 12]:
-        return {"type": "phone", "value": clean_phone(str(num_str))}
+    # phone-like numbers (DZ local or with country prefix)
+    if len(num) in [9, 10, 12]:
+        return {"type": "phone", "value": clean_phone(num)}
 
-    if 1 <= num <= 100: 
-        return {"type": "quantity", "value": num}
+    if 1 <= n <= 100:
+        return {"type": "quantity", "value": n}
 
     return {"type": "ignore", "value": None}
 
+
 def extract_phone(text: str) -> Optional[str]:
-    matches = re.findall(r"\d+", text)
-    for m in matches:
-        classified = classify_number(m)
-        if classified["type"] == "phone":
-            return classified["value"]
+    for m in re.findall(r"\d+", text or ""):
+        c = classify_number(m)
+        if c["type"] == "phone":
+            return c["value"]
     return None
 
-def smart_segment(text: str) -> Dict:
-    lines = [l.strip() for l in text.split("\n") if l.strip()]
-    result = {"phone": None, "name": None, "address": None, "items_text": None}
-    items_lines, address_lines = [], []
 
-    for i, line in enumerate(lines):
-        clean = normalize(line)
-        phone = extract_phone(clean)
-        if phone:
-            result["phone"] = phone
-            if not result["name"]:
-                name_candidate = extract_name(line)
-                if name_candidate:
-                    result["name"] = name_candidate
-                else:
-                    name_parts = [w for w in normalize(re.sub(r"\d+", " ", line)).split() if w not in NAME_STOPWORDS and not any(c.isdigit() for c in w)]
-                    if 1 <= len(name_parts) <= 3:
-                        result["name"] = " ".join(name_parts)
-            continue
-
-        words = clean.split()
-        has_product = any(detect_product(w) for w in words)
-
-        if not result["name"]:
-            if len(words) <= 3 and not any(w.isdigit() for w in words):
-                if not has_product and not any(w in NAME_STOPWORDS for w in words):
-                    if i == 0 or len(lines) <= 3:
-                        result["name"] = line
-                        continue
-
-        if has_product:
-            items_lines.append(line)
-            continue
-
-        address_lines.append(line)
-
-    result["items_text"] = " ".join(items_lines) if items_lines else None
-    result["address"] = " ".join(address_lines) if address_lines else None
-    return result
-
+# ================================
+# 👤 NAME EXTRACTION (RAW ONLY)
+# ================================
 def extract_name(text: str) -> Optional[str]:
-    match = re.search(r"^([^\d\n]+?)\s+0\d{9,11}", text.strip())
+    text = (text or "").strip()
+    if not text:
+        return None
+
+    # explicit phrases only — no guessing fallback
+    match = re.search(
+        r"(?:^|\n)(?:الاسم[:：]?\s*|اسمي\s+|أنا\s+|انا\s+|معاك\s+)([^\n\d]+)", text
+    )
     if match:
-        return match.group(1).strip()
-    match = re.search(r"(?:اسمي|انا|أنا|معاك)\s+([^\n\d]+)", text)
-    if match: return match.group(1).strip()
-    match = re.search(r"(?:الاسم[:：]?)\s*([^\n\d]+)", text)
-    if match: return match.group(1).strip()
-    words = text.split()
-    filtered = [w for w in words if w not in NAME_STOPWORDS and not re.search(r"\d", w)]
-    if 1 <= len(filtered) <= 3:
-        return " ".join(filtered)
+        candidate = match.group(1).strip()
+        if candidate and candidate not in NAME_STOPWORDS:
+            return candidate
+
+    # name followed by phone
+    match = re.search(r"^([^\d\n]+?)\s+0\d{8,11}", text)
+    if match:
+        candidate = match.group(1).strip()
+        if candidate and candidate not in NAME_STOPWORDS:
+            return candidate
+
     return None
 
+
+# ================================
+# 🧠 PRODUCT SAFE MATCH
+# ================================
 def detect_product(word: str) -> Optional[str]:
-    """
-    🔍 PRODUCT DETECTION with strict anti-corruption safeguards
-    
-    CRITICAL FIX: The old fuzzy matching allowed corrupted words to match.
-    Example: "تريك" (corrupted) matched "تريكو" due to substring check.
-    
-    New logic:
-    1. Exact match first (safest)
-    2. Fuzzy match ONLY if word contains variant (not substring)
-    3. Never allow substring match when it could be result of truncation
-    """
-    word = word.strip()
+    word = _safe_text(word).strip()
     if not word:
         return None
-    
+
     for key, variants in PRODUCTS_MAP.items():
-        # STEP 1: Exact match (highest priority)
+        # exact match
         if word in variants:
             return key
-        
-        # STEP 2: Fuzzy match ONLY for reasonable variations
-        # Protect against corrupted words like "تريك" matching "تريكو"
+
+        # safe fuzzy (NO truncation match)
         for v in variants:
-            # Only fuzzy match if:
-            # - Word is long enough (len > 3)
-            # - AND word is mostly contained (80%+ match)
-            # - AND NOT a case where word is obvious truncation of variant
             if len(word) > 3 and len(v) > 3:
-                # Prevent truncated matches: if variant starts with word + 1-2 chars, skip
-                if v.startswith(word) and len(v) - len(word) <= 2:
-                    # "تريك" starting "تريكو" → SKIP (corrupted truncation)
-                    continue
-                # Allow match if variant is fully contained in word or vice versa
-                if word in v and len(word) / len(v) > 0.7:  # 70%+ overlap
+                if word == v:
                     return key
-    
+                if word in v and len(word) / len(v) > 0.75:
+                    return key
+
     return None
 
-def extract_address(text: str) -> Dict:
-    door = re.search(r"(?:باب|رقم باب)\s*(\d+)", text)
-    building = re.search(r"(?:بناية|عمارة)\s*(\d+)", text)
-    district, province = None, None
-    for prov, data in (LOCATION_DB or {}).items():
-        if re.search(rf"\b{re.escape(prov)}\b", text):
-            province = prov
-            for d in data.get("districts", []):
-                if d in text:
-                    district = d
-                    break
-            break
-    return {"door": door.group(1) if door else None, "building": building.group(1) if building else None, "district": district, "province": province}
-
-def extract_address_details(text: str) -> str:
-    door = re.search(r"(?:باب|رقم باب)\s*(\d+)", text)
-    building = re.search(r"(?:بناية|عمارة)\s*(\d+)", text)
-    parts = []
-    if door: parts.append(f"باب {door.group(1)}")
-    if building: parts.append(f"بناية {building.group(1)}")
-    return " - ".join(parts)
 
 # ================================
-# � PHASE 1: Safe Item Segmentation
+# 📦 SEGMENTATION (SAFE "و")
 # ================================
-
 def segment_items_by_connector(text: str) -> List[str]:
-    """
-    🟢 PHASE 1: Safely segment items by "و" (AND) operator
-    
-    This function splits text into logical item chunks WITHOUT extracting attributes.
-    Each segment is kept intact for later processing.
-    
-    Example:
-    Input:  "3 تيشورت ابيض L و 2 سروال جينز ازرق XL"
-    Output: ["3 تيشورت ابيض L", "2 سروال جينز ازرق XL"]
-    
-    Args:
-        text: Raw item text containing potential segments
-        
-    Returns:
-        List of item segments (one item per segment)
-    """
     if not text:
         return []
-    
-    # 🔥 ROOT CAUSE FIX:
-    # OLD PATTERN: \s+و(?:\s+|$) - matches و even when inside words like تريكو
-    # Example: "2 تريكو ازرق" splits to ["2 تريك", "ازرق"] - CORRUPTS تريكو!
-    # 
-    # NEW PATTERN: \s+و\s+ - و must have SPACES BOTH BEFORE AND AFTER
-    # This treats و as connector ONLY when standalone
-    # Result: "2 تريكو ازرق" stays as ONE segment (no split)
-    segments = re.split(r'\s+و\s+', text)
-    
-    # Clean and filter each segment
-    cleaned_segments = []
-    for segment in segments:
-        cleaned = segment.strip()
-        if cleaned:  # Only keep non-empty segments
-            cleaned_segments.append(cleaned)
-    
-    return cleaned_segments
+
+    parts = re.split(r"\s+و\s+", text)
+    return [p.strip() for p in parts if p.strip()]
+
 
 # ================================
-# �📦 Item Extraction Engine
+# 📦 ITEMS EXTRACTION (STABLE)
 # ================================
-
-def extract_items(text: str) -> List[Dict]:
-    """
-    🟢 PHASE 1: Extract items with safe segmentation by "و" (AND)
-    
-    Algorithm:
-    1. Segment input by "و" first (PHASE 1)
-    2. Process each segment independently to extract items
-    3. Combine all extracted items
-    
-    This ensures attributes (color, size) stay with their products.
-    """
+def extract_items(text: str) -> List[Dict[str, Any]]:
     if not text:
         return []
-    
-    # 🟢 PHASE 1: Segment by "و" (AND operator)
+
     segments = segment_items_by_connector(text)
-    
-    if not segments:
-        return []
-    
-    # Process each segment independently and collect items
-    all_items = []
-    previous_item = None
-    
-    for segment in segments:
-        segment_items = _extract_items_from_segment(segment)
-        
-        if segment_items:
-            # Normal case: segment produced items
-            all_items.extend(segment_items)
-            previous_item = segment_items[-1]  # Track last item for attribute attachment
-        else:
-            # 🔥 CRITICAL FIX: Segment has no product but might have attributes
-            # Extract attributes from attribute-only segments and attach to previous item
-            attr_only = _extract_attributes_only(segment)
-            if attr_only and previous_item:
-                # Attach color/size to the previous item if not already set
-                if attr_only.get("color") and not previous_item.get("color"):
-                    previous_item["color"] = attr_only["color"]
-                if attr_only.get("size") and not previous_item.get("size"):
-                    previous_item["size"] = attr_only["size"]
-                # Don't add as separate item - just enrich previous one
-    
-    return all_items
+    results: List[Dict[str, Any]] = []
 
-
-def _extract_items_from_segment(text: str) -> List[Dict]:
-    """
-    🟡 PHASE 2: Extract single item per segment with proper attribute binding
-    
-    CRITICAL: Each segment produces EXACTLY ONE item with all attributes properly bound.
-    This prevents item duplication and ensures attributes stay with their products.
-    
-    Algorithm:
-    1. Extract quantity (leading number or word)
-    2. Extract size keywords (XL, L, M, S, etc.)
-    3. Extract color keywords (ابيض, اسود, ازرق, etc.)
-    4. Build product name from remaining product-related words
-    5. Return single item with all attributes
-    
-    Example:
-    Input:  "2 سروال جينز ازرق XL"
-    Output: [{"product": "سروال جينز", "quantity": 2, "color": "ازرق", "size": "XL"}]
-    """
-    if not text:
-        return []
-    
-    normalized = normalize(text)
-    words = normalized.split()
-    
-    if not words:
-        return []
-    
-    # 🔥 DEBUG LOGGING (STEP 0)
-    # Log to help diagnose future issues without breaking production
-    debug_log = {
-        "raw_text": text,
-        "normalized": normalized,
-        "words": words,
-        "word_count": len(words)
-    }
-    
-    # Initialize item structure
-    item = {
-        "product": None,
-        "quantity": 1,
-        "color": None,
-        "size": None
-    }
-    
-    # Track which word indices have been consumed by attributes
-    used_indices = set()
-    
-    # ===== STEP 1: Extract Quantity =====
-    # Check first word for quantity (e.g., "2" or "ثلاثة")
-    if words[0].isdigit():
-        qty_val = int(words[0])
-        classified = classify_number(words[0])
-        if classified["type"] == "quantity":
-            item["quantity"] = qty_val
-            used_indices.add(0)
-    elif words[0] in NUMBER_MAP:
-        item["quantity"] = NUMBER_MAP[words[0]]
-        used_indices.add(0)
-    
-    # ===== STEP 2: Extract Size =====
-    # Look for size keywords anywhere in the segment
-    for i, w in enumerate(words):
-        if w in SIZES:
-            item["size"] = w.upper()
-            used_indices.add(i)
-            break  # One size per item
-    
-    # ===== STEP 3: Extract Color =====
-    # Look for color keywords anywhere in the segment
-    for i, w in enumerate(words):
-        if w in COLORS:
-            item["color"] = COLORS[w]
-            used_indices.add(i)
-            break  # One color per item
-    
-    # ===== STEP 4: Build Product Name =====
-    # Collect remaining words that are product-related
-    product_words = []
-    for i, w in enumerate(words):
-        # Skip words already consumed
-        if i in used_indices:
+    for seg in segments:
+        words = normalize(seg).split()
+        if not words:
             continue
-        
-        # Check if this word is a product variant
-        if detect_product(w):
-            product_words.append(w)
-    
-    # If we found product-related words, join them
-    if product_words:
-        item["product"] = " ".join(product_words)
-    else:
-        # No recognized product found in this segment
-        return []
-    
-    # Guard against unreasonable quantities
-    if item["quantity"] > 20:
-        item["quantity"] = 20
-    
-    # 🔥 DEBUG LOGGING (STEP 5 - Final)
-    debug_log["product"] = item["product"]
-    debug_log["color"] = item["color"]
-    debug_log["size"] = item["size"]
-    debug_log["quantity"] = item["quantity"]
-    # Silently log (don't print to avoid log spam in production)
-    # But make available in meta if needed for debugging
-    item["_debug"] = debug_log
-    
-    # ===== RETURN: Single item per segment =====
-    return [item]
 
-def _extract_attributes_only(text: str) -> Optional[Dict]:
-    """
-    🔥 CRITICAL FIX: Extract attributes from segments that have no product
-    
-    When segmentation fails and attributes end up in separate segments,
-    this function extracts color/size so they can be attached to previous items.
-    
-    Example:
-    Input: "ازرق 2XL" (no product, just attributes)
-    Output: {"color": "أزرق", "size": "2XL"}
-    
-    Returns None if no attributes found.
-    """
-    if not text:
-        return None
-    
-    normalized = normalize(text)
-    words = normalized.split()
-    
-    if not words:
-        return None
-    
-    attributes = {}
-    
-    # Extract size
-    for w in words:
-        if w in SIZES:
-            attributes["size"] = w.upper()
-            break
-    
-    # Extract color
-    for w in words:
-        if w in COLORS:
-            attributes["color"] = COLORS[w]
-            break
-    
-    # Only return if we found at least one attribute
-    return attributes if attributes else None
+        item: Dict[str, Any] = {
+            "product": None,
+            "quantity": 1,
+            "color": None,
+            "size": None,
+        }
 
-def merge_similar_items(items: List[Dict]) -> List[Dict]:
-    # 🔥 FIX 8: Guard against empty items
+        # qty
+        if words[0].isdigit():
+            try:
+                item["quantity"] = int(words[0])
+            except (TypeError, ValueError):
+                item["quantity"] = 1
+        elif words[0] in NUMBER_MAP:
+            item["quantity"] = NUMBER_MAP[words[0]]
+
+        # scan words
+        product_words = []
+
+        for w in words:
+            if w in COLORS:
+                item["color"] = COLORS[w]
+                continue
+
+            if w in SIZES:
+                item["size"] = w.upper()
+                continue
+
+            if detect_product(w):
+                product_words.append(w)
+
+        if product_words:
+            item["product"] = " ".join(product_words)
+        else:
+            continue
+
+        # hard guard
+        if item["quantity"] < 1:
+            item["quantity"] = 1
+        if item["quantity"] > 20:
+            item["quantity"] = 20
+
+        results.append(item)
+
+    return results
+
+
+def merge_similar_items(items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     if not items:
         return []
-        
-    merged = []
-    for item in items:
-        if item["quantity"] > 10: 
-            item["quantity"] = 10  
-        
-        found = False
-        for m in merged:
-            same_attr = (m.get("color") == item.get("color") and m.get("size") == item.get("size"))
-            if m.get("product") == item.get("product") and same_attr:
-                m["quantity"] = min(10, m["quantity"] + item["quantity"])
-                found = True
-                break
-        if not found:
-            merged.append(item.copy())
-    return merged
 
-# ================================
-# 🚀 Business Logic Utilities
-# ================================
+    merged: List[Dict[str, Any]] = []
 
-def split_orders(messages: List[str]) -> List[List[str]]:
-    orders, current = [], []
-    for msg in messages:
-        msg = msg.strip()
-        if not msg: continue
-        current.append(msg)
-        phone = extract_phone(normalize(msg))
-        if phone and len(" ".join(current)) > 15:
-            orders.append(current)
-            current = []
-    if current: orders.append(current)
-    return orders
-    
-    
-
-def apply_learning_boost(text: str, parsed: Dict) -> Dict:
-    case = find_best_learning_match(text)
-
-    if not case:
-        return parsed
-
-    corrected = case.get("corrected", {})
-
-    # 🧠 SMART MERGE (NOT BLIND OVERRIDE)
-    for k, v in corrected.items():
-        if not v:
+    for i in items:
+        if not isinstance(i, dict):
             continue
 
-        # =========================
-        # 🔥 ITEMS (SPECIAL LOGIC)
-        # =========================
-        if k == "items":
-            if not parsed.get("items"):
-                parsed["items"] = v
-            else:
+        found = False
+        for m in merged:
+            if (
+                m.get("product") == i.get("product")
+                and m.get("color") == i.get("color")
+                and m.get("size") == i.get("size")
+            ):
                 try:
-                    parsed_items = parsed.get("items", [])
-                    learned_items = v
+                    m["quantity"] = int(m.get("quantity", 1)) + int(
+                        i.get("quantity", 1)
+                    )
+                except (TypeError, ValueError):
+                    m["quantity"] = m.get("quantity", 1)
+                found = True
+                break
 
-                    for li in learned_items:
-                        for pi in parsed_items:
-                            if pi.get("product") == li.get("product"):
-                                pi["quantity"] = li.get("quantity")
-                except Exception as e:
-                    logger.error(f"[LEARNING][ITEM MERGE ERROR] {e}")
+        if not found:
+            merged.append(i.copy())
 
-        # =========================
-        # 🧠 NORMAL FIELDS (NEW 🔥)
-        # =========================
-        else:
-            # override إذا فارغ أو غير موثوق
-            if not parsed.get(k) or parsed.get(k) in ["⚠️", None, ""]:
-                parsed[k] = v
-            
-    case["is_applied"] = True
+    return merged
 
-    logger.info(f"[LEARNING][SMART_APPLIED] {case.get('raw_message')}")
-
-    return parsed
 
 # ================================
-# 🏆 MAIN PARSER (V3 ULTRA PRO PLUS)
+# 🧩 LOCATION / ADDRESS BUILDERS
 # ================================
+def _build_location_struct(loc: Dict[str, Any], raw_text: str = "") -> Dict[str, Any]:
+    loc = loc or {}
+    location_struct = {
+        "province": _safe_text(loc.get("province")).strip() or None,
+        "district": _safe_text(loc.get("district")).strip() or None,
+        "area": _safe_text(loc.get("area")).strip() or None,
+        "building": _safe_text(loc.get("building")).strip() or None,
+        "door": _safe_text(loc.get("door")).strip() or None,
+        "detail": _safe_text(loc.get("detail")).strip() or None,
+        "confidence": loc.get("confidence")
+        if isinstance(loc.get("confidence"), (int, float))
+        else 0,
+        "location": loc.get("location"),
+    }
 
-async def parse_conversation(messages: List[str], conversation_id: Optional[str] = None, trace_id: Optional[str] = None) -> Dict:
-    try:
-        # 0. Anti-Spam & Pre-check
-        messages = [str(m or "").strip() for m in messages if str(m or "").strip()]
-        if len(messages) > 20: messages = messages[-20:]
-        if not messages:
-            return {"multi_orders": False, "order": {"status": "empty", "items": [], "meta": {}}}
+    parts = []
+    if location_struct["province"]:
+        parts.append(location_struct["province"])
+    if location_struct["district"]:
+        parts.append(location_struct["district"])
+    if location_struct["area"]:
+        parts.append(location_struct["area"])
+    if location_struct["building"]:
+        parts.append(f"عمارة {location_struct['building']}")
+    if location_struct["door"]:
+        parts.append(f"باب {location_struct['door']}")
 
-        # =========================
-        # 🔥 MULTI ORDER HANDLER
-        # =========================
-        batches = split_orders(messages)
+    if not location_struct["detail"]:
+        location_struct["detail"] = " - ".join(parts) if parts else None
 
-        if len(batches) > 1:
-            multi_results = await asyncio.gather(
-                *[parse_conversation(b, None, trace_id) for b in batches],
-                return_exceptions=True
+    if not location_struct["location"]:
+        location_struct["location"] = (
+            location_struct["area"]
+            or location_struct["district"]
+            or location_struct["province"]
+            or None
+        )
+
+    # fallback if current text contains a clear location phrase
+    if not any(
+        [
+            location_struct["province"],
+            location_struct["district"],
+            location_struct["area"],
+        ]
+    ):
+        m = re.search(r"(حي\s*\d+\s*مسكن)", normalize(raw_text))
+        if m:
+            location_struct["area"] = m.group(1)
+            location_struct["location"] = m.group(1)
+            location_struct["confidence"] = max(
+                float(location_struct["confidence"] or 0), 0.1
             )
 
-            valid_results = []
-            for result in multi_results:
+    return location_struct
+
+
+def _build_address_struct(
+    location_struct: Dict[str, Any], existing_address: Any = None
+) -> Dict[str, Any]:
+    existing_address = existing_address if isinstance(existing_address, dict) else {}
+    return {
+        "full": _safe_text(
+            existing_address.get("full") or location_struct.get("detail")
+        ).strip()
+        or None,
+        "province": _safe_text(
+            existing_address.get("province") or location_struct.get("province")
+        ).strip()
+        or None,
+        "district": _safe_text(
+            existing_address.get("district") or location_struct.get("district")
+        ).strip()
+        or None,
+        "area": _safe_text(
+            existing_address.get("area") or location_struct.get("area")
+        ).strip()
+        or None,
+        "building": _safe_text(
+            existing_address.get("building") or location_struct.get("building")
+        ).strip()
+        or None,
+        "door": _safe_text(
+            existing_address.get("door") or location_struct.get("door")
+        ).strip()
+        or None,
+    }
+
+
+def _coerce_item_dicts(items: Any) -> List[Dict[str, Any]]:
+    safe_items: List[Dict[str, Any]] = []
+    if not isinstance(items, list):
+        return safe_items
+
+    for item in items:
+        if hasattr(item, "model_dump"):
+            item = item.model_dump()
+        if isinstance(item, dict):
+            safe_items.append(item)
+
+    return safe_items
+
+
+def _finalize_order(parsed: Dict[str, Any]) -> Dict[str, Any]:
+    safe = dict(parsed or {})
+
+    # sanitize items
+    safe_items = _coerce_item_dicts(safe.get("items", []))
+    safe["items"] = [Item(**i) for i in safe_items if isinstance(i, dict)]
+
+    # sanitize address
+    address_data = safe.get("address")
+    if hasattr(address_data, "model_dump"):
+        address_data = address_data.model_dump()
+    if not isinstance(address_data, dict):
+        address_data = {}
+
+    try:
+        safe["address"] = Address(**address_data)
+    except Exception:
+        safe["address"] = Address(full=_safe_text(address_data.get("full")))
+
+    # normalize meta
+    meta = safe.get("meta")
+    if not isinstance(meta, dict):
+        meta = {}
+    safe["meta"] = meta
+
+    # final schema
+    try:
+        return ParsedOrder(**safe).model_dump()
+    except Exception:
+        # fallback raw dict for resilience
+        safe["items"] = [
+            i.model_dump() if hasattr(i, "model_dump") else i
+            for i in safe.get("items", [])
+        ]
+        safe["address"] = (
+            safe["address"].model_dump()
+            if hasattr(safe.get("address"), "model_dump")
+            else safe.get("address")
+        )
+        return safe
+
+
+# ================================
+# 🧩 MULTI ORDER DETECTION (SAFE)
+# ================================
+def split_orders(messages: List[str]) -> List[List[str]]:
+    messages = [m for m in messages if _safe_text(m).strip()]
+    if not messages:
+        return []
+
+    full_text = "\n".join(messages)
+
+    # conservative multi-order detection
+    separators = [
+        r"\n\s*\n",
+        r"\s+---\s+",
+        r"\bطلب\s+ثاني\b",
+        r"\border\s+2\b",
+        r"\border\s+two\b",
+    ]
+
+    if not any(re.search(p, full_text, flags=re.IGNORECASE) for p in separators):
+        return [messages]
+
+    chunks = re.split(
+        r"\n\s*\n|\s+---\s+|\bطلب\s+ثاني\b|\border\s+2\b|\border\s+two\b",
+        full_text,
+        flags=re.IGNORECASE,
+    )
+    batches: List[List[str]] = []
+    for chunk in chunks:
+        lines = [line.strip() for line in chunk.split("\n") if line.strip()]
+        if lines:
+            batches.append(lines)
+
+    return batches if batches else [messages]
+
+
+# ================================
+# 🏆 MAIN PARSER (EXTRACTION ONLY)
+# ================================
+async def parse_conversation(
+    messages: List[str],
+    conversation_id: Optional[str] = None,
+    trace_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    try:
+        messages = [_safe_text(m).strip() for m in messages if _safe_text(m).strip()]
+        if len(messages) > 20:
+            messages = messages[-20:]
+
+        if not messages:
+            return {
+                "multi_orders": False,
+                "order": {
+                    "status": "empty",
+                    "items": [],
+                    "meta": {"trace_id": trace_id, "conversation_id": conversation_id},
+                },
+            }
+
+        # conservative multi-order handling
+        batches = split_orders(messages)
+        if len(batches) > 1:
+            results = await asyncio.gather(
+                *[
+                    parse_conversation(batch, conversation_id, trace_id)
+                    for batch in batches
+                ],
+                return_exceptions=True,
+            )
+
+            valid_orders = []
+            for result in results:
+                if isinstance(result, Exception):
+                    continue
                 if not isinstance(result, dict):
                     continue
-                if result.get("multi_orders") is False and isinstance(result.get("order"), dict):
-                    if result["order"].get("status") != "error":
-                        valid_results.append(result["order"])
-                elif result.get("multi_orders") is True and isinstance(result.get("orders"), list):
-                    valid_results.extend([
-                        order for order in result["orders"]
-                        if isinstance(order, dict) and order.get("status") != "error"
-                    ])
+                if result.get("multi_orders") is True and isinstance(
+                    result.get("orders"), list
+                ):
+                    valid_orders.extend(
+                        [o for o in result["orders"] if isinstance(o, dict)]
+                    )
+                elif isinstance(result.get("order"), dict):
+                    valid_orders.append(result["order"])
 
-            if valid_results:
-                return {"multi_orders": True, "orders": valid_results}
+            if valid_orders:
+                return {"multi_orders": True, "orders": valid_orders}
 
             return {
                 "multi_orders": True,
-                "orders": [{"status": "error", "items": [], "meta": {"error": "All orders failed"}}]
+                "orders": [
+                    {
+                        "status": "error",
+                        "items": [],
+                        "meta": {"error": "All orders failed"},
+                    }
+                ],
             }
 
-        # =========================
-        # 🧠 UNIQUE MESSAGE CLEANER
-        # =========================
-        seen, unique_messages = set(), []
-        for m in messages:
-            m = m.strip()
-            if m and m not in seen:
-                unique_messages.append(m)
-                seen.add(m)
+        text = " ".join(messages)
 
-        history = get_conversation_history(conversation_id) if conversation_id else []
-        context_text = build_context(unique_messages)
-        full_context_text = context_text + " " + " ".join(history[-3:])
-        
-        # Intent Detection
-        intent = detect_intent(" ".join(unique_messages))
+        # raw extraction only
+        intent = detect_intent(text)
+        name = extract_name(text)
+        phone = extract_phone(text)
 
-        # 🔥 FIX 2: Context Leak Prevention (Added 'remove' to allowed history context)
-        if intent in ["update", "add", "remove"]:
-            context_for_parsing = full_context_text
-        else:
-            context_for_parsing = context_text
+        # location
+        loc = safe_infer_location(text)
+        location_struct = _build_location_struct(loc, raw_text=text)
+        address_struct = _build_address_struct(location_struct)
 
-        context_msg = normalize(context_for_parsing)
-        # 🧠 PRE-LEARNING BOOST (قبل أي parsing)
-        pre_boost = find_best_learning_match(" ".join(messages))
-        if pre_boost:
-            logger.info(f"[LEARNING][PRE-BOOST] {pre_boost.get('raw_message')}")
-        
-        # 🧠 PRE-LEARNING INJECTION (REAL BOOST 🔥)
-        case = find_best_learning_match(" ".join(messages))
-        if case and case.get("corrected"):
-            corrected = case["corrected"]
+        # items
+        items = extract_items(text)
+        items = merge_similar_items(items)
 
-            # inject into context
-            if corrected.get("items"):
-                messages.append(str(corrected["items"]))
-                
-        # 3. Layered Extraction
-        name, phone, address_details = None, None, None
-        location_data, all_items = {}, []
-        
-        # SMART SEGMENTATION
-        segmented = smart_segment("\n".join(unique_messages))
-            
-        for msg in unique_messages:
-            try:
-                clean_msg = normalize(msg)
-                # 🔥 FIX 6: smart_segment name override protection
-                if not name:
-                    name = segmented.get("name") or name
-                    if not name:
-                        name = extract_name(" ".join(unique_messages))
-                    if not name:
-                        for line in unique_messages:
-                            if len(line.split()) <= 2 and not any(c.isdigit() for c in line):
-                                name = line.strip()
-                                break
-                
-                if not phone: phone = segmented.get("phone") or extract_phone(clean_msg)
-    
-                address_input = segmented.get("address") or " ".join(unique_messages)
-                details = extract_address_details(normalize(address_input))
-                if details: address_details = details
+        # raw structural hint only — not a decision system
+        status = "draft" if items else "needs_input"
 
-                loc = safe_infer_location(clean_msg) or safe_infer_location(context_msg)
-                if not loc: loc = safe_infer_location(" ".join(unique_messages))
-                if loc:
-                    for k, v in loc.items():
-                        if v: location_data[k] = v
-
-                addr_struct = extract_address(clean_msg)
-                if any(addr_struct.values()):
-                    for k, v in addr_struct.items():
-                        if v: location_data[k] = v
-            except Exception as e:
-                logger.error(f"LOOP ERROR: {e}")
-
-        # 🔥 FIX 3: Safe Phone fallback from history (limited to last 3)
-        if not phone and history:
-            for h in reversed(history[-3:]):
-                p = extract_phone(normalize(h))
-                if p:
-                    phone = p
-                    break
-        
-        # 4. Items Extraction
-        # 🔥 FIX 7: Improved items_source selection
-        items_source = segmented.get("items_text")
-        if not items_source:
-            items_source = " ".join([
-                msg for msg in unique_messages
-                if any(detect_product(w) for w in normalize(msg).split())
-            ])
-        
-        if not items_source:
-            items_source = "\n".join(unique_messages)
-            
-        all_items = extract_items(normalize(items_source))
-        items = merge_similar_items(all_items)
-
-        # 🔥 FIX 4: Secure Items history fallback (Intent restricted)
-        items_from_history = False
-        if not items and history and intent in ["update", "add"]:
-            history_text = " ".join(history[-3:])
-            fallback_items = extract_items(normalize(history_text))
-            if fallback_items:
-                items = merge_similar_items(fallback_items)
-                items_from_history = True
-
-        items = [i for i in items if i.get("product") and i.get("quantity", 0) > 0]
-        if len(items) > 5: items = items[-5:]
-
-        # 5. Build Parsed Object
-        location = location_data.get("area") or location_data.get("district") or location_data.get("province")
-
-        if not location:
-            for line in unique_messages:
-                if any(word in line for word in ["حي", "بلدية", "ولاية", "مسكن", "عمارة"]):
-                    location = line
-                    break
-
-        if not location and segmented.get("address"):
-            location = segmented.get("address")
-        
-        status = "needs_input"
-        if items: status = "draft"
-        if items and phone: status = "confirmed"
-                
-        parsed = {
+        parsed: Dict[str, Any] = {
             "intent": intent,
             "name": name,
+            "customer_name": name,
             "phone": phone,
-            "location": location,
-            "address": {
-                "full": segmented.get("address") or address_details or location_data.get("detail"),
-                "province": location_data.get("province"),
-                "district": location_data.get("district"),
-                "area": location_data.get("area"),
-                "building": location_data.get("building"),
-                "door": location_data.get("door")
-            },
+            "location": location_struct,
+            "address": address_struct,
             "items": items,
-            "messages": [m for msg in unique_messages for m in msg.split("\n") if m.strip()],
             "status": status,
-            "meta": {"items_from_history": items_from_history}
+            "needs_review": False,
+            "messages": messages,
+            "raw_message": "\n".join(messages),
+            "meta": {
+                "trace_id": trace_id,
+                "conversation_id": conversation_id,
+                "raw_items_count": len(items),
+                "raw_extraction": True,
+            },
         }
 
-        # 6. Payment & Memory & Learning
-        full_text_raw = " ".join(unique_messages)
-        payment = detect_payment(full_text_raw)
+        # payment is raw extraction too
+        payment = detect_payment(text)
         if payment:
-            parsed.update({"payment_type": payment.get("type"), "payment_value": payment.get("value"), "payment_status": "unpaid"})
-        
-        original_parsed = parsed.copy()
-        parsed = enrich_with_memory(parsed) or parsed
+            parsed["payment_type"] = payment.get("type")
+            parsed["payment_value"] = payment.get("value")
+            parsed["payment_status"] = (
+                "cod" if payment.get("type") == "COD" else "unpaid"
+            )
 
-        # Protect new data from memory overrides
-        for field in ["name", "phone", "location"]:
-            if original_parsed.get(field):
-                parsed[field] = original_parsed[field]
-                
-        parsed = apply_learning_boost(full_text_raw, parsed) or parsed
-
-        # 🧠 NEW: Track learning usage
-        cases = get_learning_cases()
-        for case in cases:
-            if case.get("raw_message") and case["raw_message"] in full_text_raw:
-                case["is_applied"] = True
-        
-        # 7. Confidence & Meta
-        warnings = generate_warnings(parsed)
-        confidence_data = compute_confidence(parsed)
-
-        parsed.setdefault("meta", {})
-        parsed["meta"].update({
-            "confidence": confidence_data.get("confidence"),
-            "decision": confidence_data.get("decision"),
-            "breakdown": confidence_data.get("breakdown"),
-            "field_confidence": confidence_data.get("field_confidence"),
-            "warnings": warnings,
-            "raw_items_count": len(all_items),
-            "debug": {"intent": intent, "segmented": segmented, "items_source": items_source}
-        })
-
-        # 8. Production Logging
+        # keep parsed output raw and structured only
         log_event(
-            event="parser_completed", trace_id=trace_id, conversation_id=conversation_id,
-            status="ok", items_count=len(items), confidence=confidence_data.get("confidence"),
-            decision=confidence_data.get("decision"),
-            meta={"intent": intent, "has_name": bool(name), "has_phone": bool(phone)}
+            event="parser_completed",
+            trace_id=trace_id,
+            conversation_id=conversation_id,
+            status="ok",
+            items_count=len(items),
+            meta={
+                "intent": intent,
+                "has_name": bool(name),
+                "has_phone": bool(phone),
+                "raw_extraction": True,
+            },
         )
-            
-        # =========================
-        # 🔥 FALLBACK ENGINE
-        # =========================
-        if not parsed.get("items"):
-            # 🔥 FIX 1: Fallback Crash Prevention
-            full_text = messages[-1] if isinstance(messages[-1], str) else messages[-1].get("content", "")
-            lines = [l.strip() for l in full_text.split("\n") if l.strip()]
 
-            fallback_items = []
-            fallback_name = parsed.get("name")
-            fallback_phone = parsed.get("phone")
-            fallback_location = parsed.get("location")
-
-            for line in lines:
-                if not fallback_phone and re.match(r"^0\d{9}$", line):
-                    fallback_phone = clean_phone(line)
-                    continue
-
-                if not fallback_name and len(line.split()) <= 3 and not any(c.isdigit() for c in line):
-                    fallback_name = line
-                    continue
-
-                match = re.match(r"(\d+)\s*(.+)", line)
-                if match:
-                    # 🔥 FIX 9: Product Detection in Fallback
-                    qty = int(match.group(1))
-                    product_detected = detect_product(match.group(2))
-                    if product_detected:
-                        fallback_items.append({"product": product_detected, "quantity": qty})
-                    continue
-
-                if not fallback_location:
-                    fallback_location = line
-
-            parsed.update({
-                "name": fallback_name,
-                "phone": fallback_phone,
-                "location": fallback_location,
-                "items": fallback_items or parsed.get("items")
-            })
-
-        # Final Schema Conversion
-        parsed["address"] = Address(**parsed["address"])
-        parsed["items"] = [Item(**item) for item in parsed["items"]]
-
-        return {"multi_orders": False, "order": ParsedOrder(**parsed).model_dump()}
+        return {
+            "multi_orders": False,
+            "order": _finalize_order(parsed),
+        }
 
     except Exception as e:
-        # 🔥 FIX 10: Error Logging
-        log_event(event="parser_error", trace_id=trace_id, status="error", meta={"error": str(e)})
-        print(f"❌ PARSER CRASH: {e}")
-        logger.error(f"PARSER CRASH: {e}")
+        log_event(
+            event="parser_error",
+            trace_id=trace_id,
+            conversation_id=conversation_id,
+            status="error",
+            meta={"error": str(e)},
+        )
+        logger.error(f"PARSER CRASH: {e}", exc_info=True)
         return {
             "multi_orders": False,
             "order": {
                 "status": "error",
                 "items": [],
-                "meta": {"error": str(e), "fallback": True}
-            }
+                "meta": {"error": str(e), "fallback": True},
+            },
         }

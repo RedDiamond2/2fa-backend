@@ -3,6 +3,7 @@
 from typing import Dict, Any, List, Optional
 from app.services.usage_service import log_event
 
+
 # =====================================
 # 🔥 SOFT MODE (Production Toggle)
 # =====================================
@@ -12,7 +13,9 @@ SOFT_MODE = True
 # =====================================
 # 🚀 DECISION ENGINE (ULTRA PRO - REDDIAMOND)
 # =====================================
-def apply_decision(parsed: Dict[str, Any], trace_id: Optional[str] = None) -> Dict[str, Any]:
+def apply_decision(
+    parsed: Dict[str, Any], trace_id: Optional[str] = None
+) -> Dict[str, Any]:
     try:
         meta: Dict = parsed.get("meta") or {}
 
@@ -20,12 +23,13 @@ def apply_decision(parsed: Dict[str, Any], trace_id: Optional[str] = None) -> Di
         decision = decision.lower() if isinstance(decision, str) else "manual"
 
         confidence: float = meta.get("confidence") or 0.0
+
         warnings: List[str] = meta.get("warnings") or []
         if not isinstance(warnings, list):
             warnings = []
 
         conversation_id = parsed.get("conversation_id")
-        customer = parsed.get("customer")
+        customer = parsed.get("customer") or parsed.get("customer_name")
         items = parsed.get("items") or []
 
         # =====================================
@@ -36,42 +40,36 @@ def apply_decision(parsed: Dict[str, Any], trace_id: Optional[str] = None) -> Di
             "needs_review": False,
             "reason": None,
             "risk_level": "low",
-            "explain": ["decision_engine_v3"],
-            "meta": {}
+            "explain": ["decision_engine_v4"],
+            "meta": {},
         }
 
         # =====================================
         # 🚨 BLOCKING (CRITICAL)
         # =====================================
-        blocking_warnings = {
-            "no_items",
-            "missing_phone",
-        }
+        blocking_warnings = {"no_items", "missing_phone"}
 
         if any(w in blocking_warnings for w in warnings):
-            result.update({
-                "action": "hold",
-                "needs_review": True,
-                "reason": "critical_missing_data",
-                "risk_level": "high",
-            })
-            result["explain"].append("Blocked: missing critical fields")
-
-            return _finalize(result, decision, confidence, warnings)
+            result.update(
+                {
+                    "action": "hold",
+                    "needs_review": True,
+                    "reason": "critical_missing_data",
+                    "risk_level": "high",
+                }
+            )
+            result["explain"].append("blocked_missing_fields")
+            return _finalize(result, decision, confidence, warnings, meta)
 
         # =====================================
-        # ⚠️ HIGH RISK WARNINGS
+        # ⚠️ HIGH RISK
         # =====================================
-        high_risk_warnings = {
-            "invalid_phone",
-            "invalid_quantity",
-            "duplicate_item",
-        }
+        high_risk_warnings = {"invalid_phone", "invalid_quantity", "duplicate_item"}
 
         if any(w in high_risk_warnings for w in warnings):
             decision = "review"
             result["risk_level"] = "high"
-            result["explain"].append("High risk detected → forced review")
+            result["explain"].append("high_risk_forced_review")
 
         # =====================================
         # 📉 MEDIUM RISK
@@ -113,27 +111,30 @@ def apply_decision(parsed: Dict[str, Any], trace_id: Optional[str] = None) -> Di
             result["reason"] = "insufficient_data"
 
         else:
-            result.update({
-                "action": "hold",
-                "needs_review": True,
-                "reason": "unknown_decision",
-                "risk_level": "high",
-            })
-            result["explain"].append("Unknown decision type")
-
-        # =====================================
-        # 📊 CONFIDENCE ENGINE (CRITICAL)
-        # =====================================
-
-        if SOFT_MODE:
-            if confidence < 0.2:
-                result.update({
+            result.update(
+                {
                     "action": "hold",
                     "needs_review": True,
-                    "reason": "extremely_low_confidence",
+                    "reason": "unknown_decision",
                     "risk_level": "high",
-                })
-                result["explain"].append("Blocked: extremely low confidence")
+                }
+            )
+            result["explain"].append("unknown_decision_type")
+
+        # =====================================
+        # 📊 CONFIDENCE ENGINE
+        # =====================================
+        if SOFT_MODE:
+            if confidence < 0.2:
+                result.update(
+                    {
+                        "action": "hold",
+                        "needs_review": True,
+                        "reason": "extremely_low_confidence",
+                        "risk_level": "high",
+                    }
+                )
+                result["explain"].append("blocked_low_confidence")
 
             elif result["action"] == "create":
                 result["needs_review"] = False
@@ -142,65 +143,52 @@ def apply_decision(parsed: Dict[str, Any], trace_id: Optional[str] = None) -> Di
 
         else:
             if confidence < 0.4:
-                result.update({
-                    "action": "hold",
-                    "needs_review": True,
-                    "reason": "very_low_confidence",
-                    "risk_level": "high",
-                })
+                result.update(
+                    {
+                        "action": "hold",
+                        "needs_review": True,
+                        "reason": "very_low_confidence",
+                        "risk_level": "high",
+                    }
+                )
             elif confidence < 0.7:
                 result["risk_level"] = "medium"
 
         # =====================================
-        # 🧠 FUTURE READY LOGIC
+        # 🧠 FUTURE READY
         # =====================================
         if conversation_id and customer and items:
-            result["explain"].append("future_ready: merge/update possible")
+            result["explain"].append("future_ready_merge_possible")
 
         # =====================================
-        # 🧾 TRACE LOGGING (NEW - PRODUCTION)
+        # 🧾 LOGGING
         # =====================================
-        log_event(
-            event="decision_made",
-            trace_id=trace_id,
-            status=result.get("action"),
-            meta={
-                "decision": decision,
+        _log(
+            trace_id,
+            {
+                "event": "decision_made",
+                "action": result.get("action"),
                 "confidence": confidence,
-                "warnings_count": len(warnings),
-                "risk_level": result.get("risk_level")
-            }
+                "risk": result.get("risk_level"),
+                "warnings": len(warnings),
+            },
         )
 
-        # =====================================
-        # 🔍 DEBUG MODE
-        # =====================================
         if SOFT_MODE:
-            result["explain"].append("SOFT_MODE_ACTIVE")
+            result["explain"].append("soft_mode_active")
 
-        return _finalize(result, decision, confidence, warnings)
+        return _finalize(result, decision, confidence, warnings, meta)
 
     except Exception as e:
-        log_event(
-            event="decision_error",
-            trace_id=trace_id,
-            status="error",
-            meta={"error": str(e)}
-        )
-
-        print(f"❌ DECISION CRASH: {e}")
+        _log(trace_id, {"event": "decision_error", "error": str(e)})
 
         return {
             "action": "hold",
             "needs_review": True,
             "reason": "decision_error",
             "risk_level": "high",
-            "explain": [f"Decision engine failed: {str(e)}"],
-            "meta": {
-                "decision": "error",
-                "confidence": 0,
-                "warnings": []
-            }
+            "explain": [f"engine_error:{str(e)}"],
+            "meta": {"decision": "error", "confidence": 0, "warnings": []},
         }
 
 
@@ -212,17 +200,34 @@ def _finalize(
     decision: str,
     confidence: float,
     warnings: List[str],
-    field_confidence: Optional[Dict[str, Any]] = None
+    field_confidence: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
 
-    existing_meta = result.get("meta", {})
+    existing_meta = result.get("meta", {}) or {}
 
     result["meta"] = {
         **existing_meta,
         "decision": decision,
         "confidence": confidence,
         "warnings_count": len(warnings),
-        "warnings": warnings
+        "warnings": warnings,
+        "field_confidence": field_confidence
+        or existing_meta.get("field_confidence", {}),
     }
 
     return result
+
+
+# =====================================
+# 🧾 LOGGER
+# =====================================
+def _log(trace_id: Optional[str], meta: Dict[str, Any]):
+    try:
+        log_event(
+            event=meta.get("event", "decision_log"),
+            trace_id=trace_id,
+            status="ok",
+            meta=meta,
+        )
+    except Exception:
+        pass

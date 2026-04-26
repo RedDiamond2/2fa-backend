@@ -1,12 +1,39 @@
 # app/routes/ws_routes.py
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Query
-from typing import Optional
+from typing import Optional, Dict, Any
+import logging
 
 from app.services.ws_service import ws_manager
 from app.services.usage_service import log_event
 
 router = APIRouter(prefix="/ws", tags=["WebSocket"])
+
+logger = logging.getLogger("ws_routes")
+
+
+# =========================
+# 🧠 SAFE SEND
+# =========================
+async def _safe_send(websocket: WebSocket, payload: Dict[str, Any]):
+    try:
+        await websocket.send_json(payload)
+    except Exception as e:
+        logger.error(f"WS send error: {str(e)}")
+
+
+# =========================
+# 🧠 SAFE RECEIVE
+# =========================
+async def _safe_receive(websocket: WebSocket) -> Optional[Dict[str, Any]]:
+    try:
+        data = await websocket.receive_json()
+        if not isinstance(data, dict):
+            return None
+        return data
+    except Exception as e:
+        logger.warning(f"WS receive error: {str(e)}")
+        return None
 
 
 # =========================
@@ -33,11 +60,25 @@ async def websocket_endpoint(
             },
         )
 
+        await _safe_send(
+            websocket,
+            {
+                "event": "connected",
+                "user_id": user_id,
+            },
+        )
+
         # =========================
         # 🔁 MESSAGE LOOP
         # =========================
         while True:
-            data = await websocket.receive_json()
+            data = await _safe_receive(websocket)
+
+            if not data:
+                await _safe_send(
+                    websocket, {"event": "error", "message": "Invalid or empty payload"}
+                )
+                continue
 
             await log_event(
                 event="ws_message",
@@ -45,14 +86,23 @@ async def websocket_endpoint(
                 meta={"data": data},
             )
 
-            # 🔥 EVENT ROUTING (forward to manager)
-            if isinstance(data, dict) and "event" in data:
+            event_type = data.get("event")
+
+            if not event_type:
+                await _safe_send(
+                    websocket, {"event": "error", "message": "Missing event field"}
+                )
+                continue
+
+            try:
                 await ws_manager.handle_event(user_id, data)
-            else:
-                await ws_manager.send_personal(user_id, {
-                    "event": "error",
-                    "message": "Invalid event format",
-                })
+            except Exception as e:
+                logger.error(f"WS event handler crash: {str(e)}", exc_info=True)
+
+                await _safe_send(
+                    websocket,
+                    {"event": "error", "message": "Internal event handling error"},
+                )
 
     except WebSocketDisconnect:
         await ws_manager.disconnect(user_id)
@@ -61,4 +111,18 @@ async def websocket_endpoint(
             event="ws_disconnect",
             user_id=user_id,
             meta={},
+        )
+
+    except Exception as e:
+        logger.error(f"WS fatal error: {str(e)}", exc_info=True)
+
+        try:
+            await ws_manager.disconnect(user_id)
+        except Exception:
+            pass
+
+        await log_event(
+            event="ws_error",
+            user_id=user_id,
+            meta={"error": str(e)},
         )

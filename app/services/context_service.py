@@ -2,90 +2,148 @@
 
 from typing import List, Dict, Any
 from datetime import datetime
+import threading
+import re
+
 from app.core.database import conversations_collection
 
 # =====================================
 # ⚙️ CONFIG (Elite Production)
 # =====================================
-MAX_HISTORY = 20          # أقصى عدد رسائل يتم تخزينها في قاعدة البيانات
-CONTEXT_WINDOW = 10       # عدد الرسائل المستخدمة لبناء السياق الذكي
-MAX_STACK = 5             # أقصى حد لمنتجات الـ Stack لمنع تضخم السياق
+MAX_HISTORY = 20
+CONTEXT_WINDOW = 10
+MAX_STACK = 5
+
+_CONTEXT_LOCK = threading.Lock()
+
 
 # =====================================
-# 📥 GET HISTORY (Normalized)
+# 🧠 SAFE NORMALIZATION (ANTI-CORRUPTION)
 # =====================================
-def get_conversation_history(conversation_id: str) -> List[str]:
-    """تسترجع التاريخ وتنظفه ليعود دائماً كقائمة نصوص لضمان التوافق."""
-    if not conversation_id:
+def _normalize_messages(messages: Any) -> List[str]:
+    if not isinstance(messages, list):
         return []
 
-    convo = conversations_collection.find_one({"id": conversation_id})
-    if not convo:
-        return []
-
-    messages = convo.get("messages", [])[-MAX_HISTORY:]
-
-    cleaned = []
+    cleaned: List[str] = []
     for msg in messages:
-        if isinstance(msg, dict):
-            cleaned.append(msg.get("text", ""))
-        else:
-            cleaned.append(msg)
+        if msg is None:
+            continue
+        text = str(msg).strip()
+        if text:
+            cleaned.append(text)
+
     return cleaned
 
 
+def _extract_message_text(msg: Any) -> str:
+    if isinstance(msg, dict):
+        return str(msg.get("text", "")).strip()
+    return str(msg).strip()
+
+
+def _load_existing_history(conversation_id: str) -> List[str]:
+    if not conversation_id or conversations_collection is None:
+        return []
+
+    try:
+        convo = conversations_collection.find_one({"id": conversation_id})
+        if not convo:
+            return []
+
+        messages = convo.get("messages", [])
+        if not isinstance(messages, list):
+            return []
+
+        cleaned = []
+        for msg in messages:
+            text = _extract_message_text(msg)
+            if text:
+                cleaned.append(text)
+
+        return cleaned[-MAX_HISTORY:]
+    except Exception:
+        return []
+
+
 # =====================================
-# 💾 SAVE HISTORY (Structured JSON)
+# 📥 GET HISTORY (READ ONLY + SAFE)
+# =====================================
+def get_conversation_history(conversation_id: str) -> List[str]:
+    return _load_existing_history(conversation_id)
+
+
+# =====================================
+# 💾 SAVE HISTORY (ISOLATED MUTATION)
 # =====================================
 def save_conversation(conversation_id: str, messages: List[Any]):
-    """تحفظ المحادثة مع هيكلة JSON غنية للحفاظ على التوقيت ونوع الرسالة."""
-    if not conversation_id:
+    if not conversation_id or conversations_collection is None:
         return
 
-    normalized = []
-    for msg in messages:
-        if isinstance(msg, str):
-            normalized.append({
-                "text": msg,
-                "timestamp": datetime.utcnow(),
-                "type": "user"
-            })
-        else:
-            normalized.append(msg)
+    try:
+        incoming = _normalize_messages(messages)
+        if not incoming:
+            return
 
-    trimmed = normalized[-MAX_HISTORY:]
+        with _CONTEXT_LOCK:
+            existing_messages = _load_existing_history(conversation_id)
 
-    conversations_collection.update_one(
-        {"id": conversation_id},
-        {
-            "$set": {
-                "messages": trimmed,
-                "updated_at": datetime.utcnow()
-            },
-            "$setOnInsert": {
-                "created_at": datetime.utcnow()
-            }
-        },
-        upsert=True
-    )
+            # Preserve order, avoid duplicate re-appends at the tail
+            tail_window = existing_messages[-5:] if existing_messages else []
+            merged = list(existing_messages)
+
+            for msg in incoming:
+                if msg and msg not in tail_window:
+                    merged.append(msg)
+                    tail_window.append(msg)
+                    tail_window = tail_window[-5:]
+
+            trimmed = [
+                {"text": msg, "timestamp": datetime.utcnow(), "type": "user"}
+                for msg in merged[-MAX_HISTORY:]
+            ]
+
+            conversations_collection.update_one(
+                {"id": conversation_id},
+                {
+                    "$set": {
+                        "messages": trimmed,
+                        "updated_at": datetime.utcnow(),
+                    },
+                    "$setOnInsert": {"created_at": datetime.utcnow()},
+                },
+                upsert=True,
+            )
+    except Exception:
+        return
 
 
 # =====================================
-# 🧠 EXTRACT LAST KNOWN INFO (Identity & Cities)
+# 🧠 EXTRACT LAST KNOWN INFO (NO COUPLING)
 # =====================================
-def extract_last_known_info(history: List[str]) -> Dict:
-    """استخراج المعلومات الأساسية مع كشف المدن الجزائرية وتوليد Identity Hint."""
+def extract_last_known_info(history: List[str]) -> Dict[str, Any]:
+    history = _normalize_messages(history)
+
     last_name = None
     last_location = None
     last_phone = None
 
-    # المدن والكلمات الدلالية للمواقع
-    location_keywords = ["حي", "بلدية", "دار", "باب", "طريق", "وهران", "الجزائر", "سطيف", "عنابة", "قسنطينة"]
+    location_keywords = [
+        "حي",
+        "بلدية",
+        "دار",
+        "باب",
+        "طريق",
+        "وهران",
+        "الجزائر",
+        "سطيف",
+        "عنابة",
+        "قسنطينة",
+    ]
 
-    for msg in reversed(history):
+    for msg in reversed(history[-MAX_HISTORY:]):
         msg_clean = msg.strip()
 
-        # 📞 كشف الهاتف (Normalizing DZ numbers)
+        # 📞 phone
         if not last_phone:
             digits = "".join(filter(str.isdigit, msg_clean))
             if len(digits) >= 8:
@@ -93,23 +151,24 @@ def extract_last_known_info(history: List[str]) -> Dict:
                     digits = "0" + digits[3:]
                 last_phone = digits
 
-        # 📍 كشف الموقع
+        # 📍 location
         if not last_location:
             if any(w in msg_clean for w in location_keywords):
                 last_location = msg_clean
 
-        # 👤 كشف الاسم (مع فلاتر الجودة)
+        # 👤 name
         if not last_name:
             words = msg_clean.split()
-            if (1 <= len(words) <= 3 
-                and not any(char.isdigit() for char in msg_clean)
-                and len(msg_clean) > 2):
+            if (
+                1 <= len(words) <= 3
+                and not any(c.isdigit() for c in msg_clean)
+                and len(msg_clean) > 2
+            ):
                 last_name = msg_clean
 
         if last_name and last_location and last_phone:
             break
 
-    # توليد معرف الهوية الفريد للربط بين الجلسات
     identity = None
     if last_phone:
         identity = f"user_{last_phone}"
@@ -120,117 +179,123 @@ def extract_last_known_info(history: List[str]) -> Dict:
         "name_hint": last_name,
         "location_hint": last_location,
         "phone_hint": last_phone,
-        "identity_hint": identity
+        "identity_hint": identity,
     }
 
 
 # =====================================
-# 🧠 BUILD SMART CONTEXT (Elite Version)
+# 🧠 CONTEXT BUILDER (ANTI-CONTAMINATION)
 # =====================================
 def build_context(messages: List[str]) -> str:
-    """
-    محرك السياق الذكي:
-    - يدعم Multi-product stack مع حماية Memory Leak.
-    - يزن الرسائل (Weighting) حسب الحداثة.
-    - يحقن إشارات الثقة (Confidence) للـ AI.
-    - يصفي الضجيج (Noise Filter).
-    """
     if not messages:
         return ""
 
-    recent_messages = messages[-CONTEXT_WINDOW:]
-    total = len(recent_messages)
-    
+    messages = _normalize_messages(messages)
+    if not messages:
+        return ""
+
+    recent = messages[-CONTEXT_WINDOW:]
+
     context_parts = []
     last_product = None
-    product_stack = []  # تتبع تسلسل المنتجات
-    seen = set()        # منع التكرار (Anti-Spam)
+    product_stack = []
+    seen = set()
 
-    for i, msg in enumerate(recent_messages):
+    for i, msg in enumerate(recent):
         msg = clean_message(msg)
 
-        # 🚫 Context Noise Filter (تجاهل الرسائل غير المفيدة)
-        if not msg or msg.lower() in ["ok", "okay", "merci", "شكرا", "تمام", "done", "ماشي"]:
+        if not msg:
+            continue
+
+        # 🚫 noise filter
+        if msg.lower() in ["ok", "okay", "merci", "شكرا", "تمام", "done", "ماشي"]:
             continue
 
         if msg in seen:
             continue
-        
         seen.add(msg)
-        
-        # حساب الوزن (الرسالة الأحدث = وزن 1.0)
-        weight = round((i + 1) / total, 2) if total > 0 else 1.0
 
-        # 🛒 PRODUCT: Smart Dedup & Memory Protection
+        weight = round((i + 1) / len(recent), 2) if recent else 1.0
+
+        # 🛒 product
         if is_product(msg):
             last_product = msg
             if msg not in product_stack:
                 product_stack.append(msg)
-            
-            # حماية من تضخم الـ Stack (Memory Leak Fix)
+
             if len(product_stack) > MAX_STACK:
                 product_stack.pop(0)
-                
-            context_parts.append(f"[PRODUCT|w={weight}|c=high] {msg}")
+
+            context_parts.append(f"[PRODUCT|w={weight}] {msg}")
             continue
 
-        # تحديد المنتج المستهدف (Target) بناءً على الـ Stack
         target = last_product or (product_stack[-1] if product_stack else None)
 
-        # 🔢 QUANTITY
+        # 🔢 quantity
         if is_quantity(msg) and target:
-            context_parts.append(f"[QTY→{target}|w={weight}|c=high] {msg}")
+            context_parts.append(f"[QTY→{target}|w={weight}] {msg}")
             continue
 
-        # ➕ CONTINUATION / UPDATE
+        # ➕ continuation
         if is_continuation(msg) and target:
-            context_parts.append(f"[UPDATE→{target}|w={weight}|c=high] {msg}")
+            context_parts.append(f"[UPDATE→{target}|w={weight}] {msg}")
             continue
 
-        # 📍 LOCATION (Medium Confidence)
-        if any(w in msg for w in ["حي", "بلدية", "دار", "باب", "وهران", "سطيف", "الجزائر"]):
-            context_parts.append(f"[LOCATION|w={weight}|c=medium] {msg}")
+        # 📍 location
+        if any(
+            w in msg for w in ["حي", "بلدية", "دار", "باب", "وهران", "سطيف", "الجزائر"]
+        ):
+            context_parts.append(f"[LOCATION|w={weight}] {msg}")
             continue
 
-        # 📞 PHONE (Normalization & High Confidence)
+        # 📞 phone
         digits = "".join(filter(str.isdigit, msg))
         if len(digits) >= 8:
             if digits.startswith("213"):
                 digits = "0" + digits[3:]
-            context_parts.append(f"[PHONE|w={weight}|c=high] {digits}")
+            context_parts.append(f"[PHONE|w={weight}] {digits}")
             continue
 
-        # DEFAULT (Low Confidence)
-        context_parts.append(f"[{weight}|c=low] {msg}")
+        context_parts.append(f"[{weight}] {msg}")
 
-    return " || ".join(context_parts)
+    # safe size cap
+    joined = " || ".join(context_parts)
+    if len(joined) > 4000:
+        joined = joined[-4000:]
+
+    return joined
 
 
 # =====================================
-# 🧹 UTILS & DETECTORS
+# 🧹 UTILS
 # =====================================
 def clean_message(msg: str) -> str:
-    """تنظيف عميق للنص من المسافات المتعددة والرموز."""
-    msg = msg.strip().replace("\n", " ").replace("\t", " ")
-    while "  " in msg:
-        msg = msg.replace("  ", " ")
+    msg = str(msg or "").strip().replace("\n", " ").replace("\t", " ")
+    msg = re.sub(r"\s+", " ", msg)
     return msg
 
 
 def is_product(msg: str) -> bool:
-    """الكلمات المفتاحية للمنتجات."""
-    keywords = ["تريكو", "تيش", "سروال", "صباط", "حذاء", "قميص", "فستان", "جلباب", "خمار", "عباءة"]
+    keywords = [
+        "تريكو",
+        "تيش",
+        "سروال",
+        "صباط",
+        "حذاء",
+        "قميص",
+        "فستان",
+        "جلباب",
+        "خمار",
+        "عباءة",
+    ]
     return any(k in msg for k in keywords)
 
 
 def is_quantity(msg: str) -> bool:
-    """كشف الكميات (أرقام أو كلمات)."""
-    has_digit = any(char.isdigit() for char in msg)
-    qty_words = ["زوج", "ثلاثة", "اربعة", "خمسة", "حبة", "قطعة", "كونتيتي", "عدد"]
-    return has_digit or any(k in msg for k in qty_words)
+    qty_words = ["زوج", "ثلاثة", "اربعة", "خمسة", "حبة", "قطعة", "عدد"]
+    return any(c.isdigit() for c in msg) or any(k in msg for k in qty_words)
 
 
 def is_continuation(msg: str) -> bool:
-    """كشف الرغبة في الإضافة لآخر منتج."""
-    keywords = ["زيد", "اضف", "حتى", "زيدلي", "كمان", "ايضا"]
+    keywords = ["زيد", "اضف", "زيدلي", "كمان", "ايضا", "حتى"]
     return any(k in msg for k in keywords)
