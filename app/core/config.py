@@ -72,7 +72,7 @@ class Settings:
     # CORS
     # -------------------------
     CORS_ORIGINS: str = os.getenv(
-        "CORS_ORIGINS", "https://twofa-backend-hbkp.onrender.com:5173"
+        "CORS_ORIGINS", "https://twofa-backend-hbkp.onrender.com"
     )
 
     # -------------------------

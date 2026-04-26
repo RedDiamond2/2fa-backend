@@ -54,8 +54,9 @@ allow_origins = settings.CORS_ORIGINS.split(",")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
-        "https://twofa-backend-hbkp.onrender.com:5173",
-        "http://127.0.0.1:5173",
+        "https://twofa-backend-hbkp.onrender.com",
+        "http://localhost:5173",
+        "https://reddiamond2.github.io",
     ],
     allow_credentials=True,
     allow_methods=["*"],
