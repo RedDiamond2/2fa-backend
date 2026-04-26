@@ -71,7 +71,9 @@ class Settings:
     # -------------------------
     # CORS
     # -------------------------
-    CORS_ORIGINS: str = os.getenv("CORS_ORIGINS", "http://localhost:5173")
+    CORS_ORIGINS: str = os.getenv(
+        "CORS_ORIGINS", "https://twofa-backend-hbkp.onrender.com:5173"
+    )
 
     # -------------------------
     # VALIDATION (NO CRASH MODE)
