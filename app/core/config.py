@@ -38,7 +38,7 @@ class Settings:
     # -------------------------
     # APP
     # -------------------------
-    APP_NAME: str = os.getenv("APP_NAME", "CRM MVP")
+    APP_NAME: str = os.getenv("APP_NAME", "RedDiamond CRM")
     VERSION: str = os.getenv("VERSION", "1.0.0")
     ENV: str = os.getenv("ENV", "dev")
     DEBUG: bool = ENV == "dev"
@@ -46,7 +46,7 @@ class Settings:
     # -------------------------
     # DATABASE
     # -------------------------
-    MONGO_URL: str = os.getenv("MONGO_URI", "")
+    MONGO_URI: str = os.getenv("MONGO_URI", "")
     DB_NAME: str = os.getenv("DB_NAME", "crm_db")
 
     # -------------------------
@@ -72,7 +72,7 @@ class Settings:
     # CORS
     # -------------------------
     CORS_ORIGINS: str = os.getenv(
-        "CORS_ORIGINS", "https://twofa-backend-hbkp.onrender.com"
+        "CORS_ORIGINS", "http://localhost:5173,https://reddiamond2.github.io"
     )
 
     # -------------------------
@@ -81,14 +81,15 @@ class Settings:
     def validate(self) -> bool:
         issues = []
 
-        if not self.MONGO_URL:
+        if not self.MONGO_URI:
             issues.append("MONGO_URI missing")
 
         if not self.DB_NAME:
             issues.append("DB_NAME missing")
 
-        for i in issues:
-            logging.warning(f"[CONFIG] {i}")
+        if issues:
+            for i in issues:
+                logging.warning(f"[CONFIG] {i}")
 
         return True
 
@@ -98,6 +99,4 @@ class Settings:
 # =========================================
 
 settings = Settings()
-
-# safe validate (never crash runtime)
 settings.validate()

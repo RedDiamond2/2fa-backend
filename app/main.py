@@ -1,6 +1,6 @@
-# app/main.py
 import sys
 import logging
+import os
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -8,7 +8,6 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.config import settings
 from app.core.database import init_mongo_client, init_mongo_indexes
-
 from app.services.usage_service import ensure_usage_indexes
 
 from app.routes import (
@@ -48,21 +47,36 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title=settings.APP_NAME, version=settings.VERSION, lifespan=lifespan)
 
+# =========================
+# CORS (PRODUCTION SAFE 2026)
+# =========================
 
-allow_origins = settings.CORS_ORIGINS.split(",")
+
+def get_cors_origins():
+    raw = os.getenv("CORS_ORIGINS", "")
+    origins = [o.strip() for o in raw.split(",") if o.strip()]
+
+    fallback = [
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+        "https://reddiamond2.github.io",
+    ]
+
+    return origins if origins else fallback
+
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "https://twofa-backend-hbkp.onrender.com",
-        "http://localhost:5173",
-        "https://reddiamond2.github.io",
-    ],
+    allow_origins=get_cors_origins(),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
+
+# =========================
+# ROUTES
+# =========================
 
 app.include_router(order_routes.router)
 app.include_router(customer_routes.router)
