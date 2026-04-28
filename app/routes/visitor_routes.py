@@ -1,13 +1,14 @@
 # app/routes/visitor_routes.py
 
 from fastapi import APIRouter, Request
-from typing import Dict, Any
+from typing import Dict
 from datetime import datetime
 import hashlib
 import json
 
 from app.services.visitor_service import create_or_get_visitor
 from app.core.database import db
+from app.services.geo_service import get_geo_enterprise
 
 router = APIRouter()
 
@@ -41,64 +42,6 @@ def parse_client_hints(request: Request) -> Dict[str, str]:
         "platform": request.headers.get("sec-ch-ua-platform", "Unknown"),
         "brands": request.headers.get("sec-ch-ua", "Unknown"),
     }
-
-
-# ==========================================
-# 🌍 GEO SYSTEM (بديل ipinfo - من DB + fallback)
-# ==========================================
-
-
-async def get_geo_enterprise(ip: str) -> Dict[str, Any]:
-    """
-    بدل ipinfo.io:
-    - يعتمد على local DB
-    - أو fallback بسيط بدون API خارجي
-    """
-
-    if ip.startswith("127.") or ip == "::1":
-        return {
-            "country": "Local",
-            "region": "Local",
-            "city": "Local",
-            "loc": "0,0",
-            "timezone": "UTC",
-            "org": "Local",
-            "is_vpn": False,
-            "is_proxy": False,
-            "is_hosting": False,
-        }
-
-    # ================================
-    # cache system (MongoDB)
-    # ================================
-    cached = await db["geo_cache"].find_one({"_id": ip})
-    if cached:
-        return cached["data"]
-
-    # ================================
-    # fallback heuristic (بدون API)
-    # ================================
-    geo_data = {
-        "country": "Unknown",
-        "region": "Unknown",
-        "city": "Unknown",
-        "loc": "0,0",
-        "timezone": "UTC",
-        "org": "Unknown ISP",
-        "is_vpn": False,
-        "is_proxy": False,
-        "is_hosting": False,
-    }
-
-    await db["geo_cache"].insert_one(
-        {
-            "_id": ip,
-            "data": geo_data,
-            "cached_at": datetime.utcnow(),
-        }
-    )
-
-    return geo_data
 
 
 # ==========================================
