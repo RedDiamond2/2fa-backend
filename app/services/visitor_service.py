@@ -26,7 +26,12 @@ async def create_or_get_visitor(data: Dict[str, Any]) -> Dict[str, Any]:
         # 🧠 soft update meta (non-destructive)
         update_fields = {}
 
-        for field in ["ip", "country", "region", "city", "user_agent"]:
+        for field in ["ip", "user_agent"]:
+            if data.get("location"):
+                update_fields["location"] = data["location"]
+
+            if data.get("hardware"):
+                update_fields["hardware"] = data["hardware"]
             if data.get(field) and not existing.get(field):
                 update_fields[field] = data[field]
 
@@ -50,9 +55,9 @@ async def create_or_get_visitor(data: Dict[str, Any]) -> Dict[str, Any]:
         "fingerprint": fingerprint,
         # optional meta
         "ip": data.get("ip"),
-        "country": data.get("country"),
-        "region": data.get("region"),
-        "city": data.get("city"),
+        "location": data.get("location"),
+        "hardware": data.get("hardware"),
+        "raw_fp": data.get("raw_fp"),
         "user_agent": data.get("user_agent"),
         # linking
         "linked_customer_id": None,

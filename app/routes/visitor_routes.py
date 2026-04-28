@@ -113,6 +113,10 @@ async def init_visitor(request: Request, body: dict):
             "cores": body.get("hardwareConcurrency"),
             "memory": body.get("deviceMemory"),
             "gpu": body.get("webgl_renderer"),
+            "platform": body.get("platform"),
+            "screen": body.get("screen"),
+            "pixel_ratio": body.get("devicePixelRatio"),
+            "color_depth": body.get("colorDepth"),
         },
         # location
         "location": {
@@ -122,6 +126,7 @@ async def init_visitor(request: Request, body: dict):
             "lat_lon": geo["loc"],
             "timezone": geo["timezone"],
         },
+        "raw_fp": body,
         "first_seen": datetime.utcnow(),
         "last_seen": datetime.utcnow(),
         "visit_count": 1,
