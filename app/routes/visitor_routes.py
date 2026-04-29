@@ -1,39 +1,26 @@
 # app/routes/visitor_routes.py
 
 from fastapi import APIRouter, Request
-from typing import Dict
-from datetime import datetime
+from typing import Dict, Any
 import hashlib
 import json
 
 from app.services.visitor_service import create_or_get_visitor
-from app.core.database import db
 from app.services.geo_service import get_geo_enterprise
 
 router = APIRouter()
 
 
-# ==========================================
-# 🔐 IP REAL DETECTION (بديل ipinfo.io)
-# ==========================================
-
-
 def get_real_ip(request: Request) -> str:
-    """استخراج IP الحقيقي بدون أي API خارجي"""
+    """استخراج IP الحقيقي من الـ headers"""
     cf_ip = request.headers.get("cf-connecting-ip")
     if cf_ip:
         return cf_ip
-
     forwarded = request.headers.get("x-forwarded-for")
     if forwarded:
         return forwarded.split(",")[0].strip()
-
-    return request.client.host
-
-
-# ==========================================
-# 🧠 CLIENT HINTS
-# ==========================================
+    client_host = request.client.host if request.client else None
+    return client_host or "0.0.0.0"
 
 
 def parse_client_hints(request: Request) -> Dict[str, str]:
@@ -44,12 +31,10 @@ def parse_client_hints(request: Request) -> Dict[str, str]:
     }
 
 
-# ==========================================
-# 🧬 FINGERPRINT ENGINE
-# ==========================================
-
-
-def generate_enterprise_fingerprint(body: dict, request: Request, hints: dict) -> str:
+def generate_enterprise_fingerprint(
+    body: Dict[str, Any], request: Request, hints: Dict[str, str]
+) -> str:
+    """توليد بصمة قوية باستخدام كل العوامل الممكنة"""
     hardware_factors = {
         "screen": body.get("screen"),
         "availScreen": body.get("availScreen"),
@@ -57,58 +42,52 @@ def generate_enterprise_fingerprint(body: dict, request: Request, hints: dict) -
         "colorDepth": body.get("colorDepth"),
         "hardwareConcurrency": body.get("hardwareConcurrency"),
         "deviceMemory": body.get("deviceMemory"),
-        "cpuClass": body.get("cpuClass"),
         "platform": body.get("platform") or hints.get("platform"),
         "timezone": body.get("timezone"),
         "webgl_vendor": body.get("webgl_vendor"),
         "webgl_renderer": body.get("webgl_renderer"),
-        "audio_hash": body.get("audio_hash"),
         "fonts": sorted(body.get("fonts", [])),
+        "canvas_hash": body.get("canvas_hash"),
     }
-
     browser_factors = {
         "ua": request.headers.get("user-agent"),
         "lang": request.headers.get("accept-language"),
         "brands": hints.get("brands"),
     }
-
     combined = {**hardware_factors, **browser_factors}
-
     fingerprint_str = json.dumps(combined, sort_keys=True, default=str)
     return hashlib.sha256(fingerprint_str.encode("utf-8")).hexdigest()
 
 
-# ==========================================
-# 🚀 MAIN ROUTE
-# ==========================================
-
-
 @router.post("/visitor/init")
-async def init_visitor(request: Request, body: dict):
+async def init_visitor(request: Request, body: Dict[str, Any]):
+    # 1. معلومات IP والموقع
     ip = get_real_ip(request)
     geo = await get_geo_enterprise(ip)
     hints = parse_client_hints(request)
 
-    # ================================
-    # fingerprint generation
-    # ================================
-    fingerprint = body.get("fingerprint")
-    if not fingerprint or len(fingerprint) < 40:
-        fingerprint = generate_enterprise_fingerprint(body, request, hints)
+    # 2. البصمة
+    client_fingerprint = body.get("fingerprint")
+    if not client_fingerprint or len(client_fingerprint) < 40:
+        client_fingerprint = generate_enterprise_fingerprint(body, request, hints)
 
-    # ================================
-    # visitor record
-    # ================================
-    visitor_data = {
-        "fingerprint": fingerprint,
-        "user_agent": request.headers.get("user-agent"),
+    # 3. بناء الكائن الكامل للزائر (بالشكل الذي تنتظره create_or_get_visitor)
+    visitor_payload = {
+        "fingerprint": client_fingerprint,
         "ip": ip,
-        # security signals
-        "is_vpn": geo["is_vpn"],
-        "is_proxy": geo["is_proxy"],
-        "is_hosting": geo["is_hosting"],
-        "isp_org": geo["org"],
-        # hardware
+        "user_agent": request.headers.get("user-agent"),
+        "isp_org": geo.get("org"),
+        "is_vpn": geo.get("is_vpn", False),
+        "is_proxy": geo.get("is_proxy", False),
+        "is_hosting": geo.get("is_hosting", False),
+        "incognito_mode": body.get("incognito", False),
+        "location": {
+            "country": geo.get("country"),
+            "region": geo.get("region"),
+            "city": geo.get("city"),
+            "lat_lon": geo.get("loc"),
+            "timezone": geo.get("timezone"),
+        },
         "hardware": {
             "cores": body.get("hardwareConcurrency"),
             "memory": body.get("deviceMemory"),
@@ -118,47 +97,20 @@ async def init_visitor(request: Request, body: dict):
             "pixel_ratio": body.get("devicePixelRatio"),
             "color_depth": body.get("colorDepth"),
         },
-        # location
-        "location": {
-            "country": geo["country"],
-            "region": geo["region"],
-            "city": geo["city"],
-            "lat_lon": geo["loc"],
-            "timezone": geo["timezone"],
-        },
-        "raw_fp": body,
-        "first_seen": datetime.utcnow(),
-        "last_seen": datetime.utcnow(),
-        "visit_count": 1,
-        "incognito_mode": body.get("incognito", False),
+        "raw_fp": body,  # حفظ كل البيانات الخام التي أرسلها العميل
     }
 
-    # ================================
-    # existing visitor
-    # ================================
-    existing = await db["visitors"].find_one({"fingerprint": fingerprint})
+    # 4. استدعاء الخدمة الموحدة (تتعامل مع الإدراج أو التحديث)
+    result = await create_or_get_visitor(visitor_payload)
 
-    if existing:
-        await db["visitors"].update_one(
-            {"_id": existing["_id"]},
-            {
-                "$set": {
-                    "last_seen": datetime.utcnow(),
-                    "ip": ip,
-                    "location": visitor_data["location"],
-                },
-                "$inc": {"visit_count": 1},
-            },
-        )
+    # 5. إعادة النتيجة مع بيانات الزائر كاملة
+    if result.get("status") == "invalid":
+        return {"success": False, "reason": result.get("reason")}
 
-        visitor_data = existing
+    # تأكد من وجود _id كسلسلة نصية
+    visitor_data = result.copy()
+    if "_id" in visitor_data and not isinstance(visitor_data["_id"], str):
         visitor_data["_id"] = str(visitor_data["_id"])
-
-    else:
-        visitor = await create_or_get_visitor(visitor_data)
-        visitor_data = visitor
-        if visitor_data and "_id" in visitor_data:
-            visitor_data["_id"] = str(visitor_data["_id"])
 
     return {
         "success": True,
