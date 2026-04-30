@@ -1,12 +1,10 @@
 # app/api/customer_routes_api.py
 
 from fastapi import APIRouter, HTTPException, Depends, Query
-from typing import Dict, Any, List, Optional
-from datetime import datetime
+from typing import Dict, Any, Optional
 
 # Services
 from app.services.customer_service import find_or_create_customer, merge_customer
-from app.utils.fingerprint import fingerprint_from_parsed
 
 # DB
 from app.core.database import get_db
@@ -17,6 +15,7 @@ router = APIRouter(prefix="/customers", tags=["Customers"])
 # =========================================
 # 🟢 GET CUSTOMER BY ID
 # =========================================
+
 
 @router.get("/{customer_id}")
 async def get_customer(customer_id: str, db=Depends(get_db)):
@@ -32,11 +31,10 @@ async def get_customer(customer_id: str, db=Depends(get_db)):
 # 🟢 LIST CUSTOMERS
 # =========================================
 
+
 @router.get("/")
 async def list_customers(
-    limit: int = Query(50, le=200),
-    skip: int = Query(0),
-    db=Depends(get_db)
+    limit: int = Query(50, le=200), skip: int = Query(0), db=Depends(get_db)
 ):
     cursor = db.customers.find().sort("updated_at", -1).skip(skip).limit(limit)
 
@@ -44,21 +42,17 @@ async def list_customers(
     async for doc in cursor:
         customers.append(doc)
 
-    return {
-        "customers": customers,
-        "count": len(customers)
-    }
+    return {"customers": customers, "count": len(customers)}
 
 
 # =========================================
 # 🟢 SEARCH CUSTOMER (IMPORTANT)
 # =========================================
 
+
 @router.get("/search/")
 async def search_customers(
-    phone: Optional[str] = None,
-    name: Optional[str] = None,
-    db=Depends(get_db)
+    phone: Optional[str] = None, name: Optional[str] = None, db=Depends(get_db)
 ):
     query = {}
 
@@ -84,6 +78,7 @@ async def search_customers(
 # 🟢 CREATE / FIND CUSTOMER (API ENTRY)
 # =========================================
 
+
 @router.post("/")
 async def create_or_find_customer(payload: Dict[str, Any], db=Depends(get_db)):
     """
@@ -97,18 +92,18 @@ async def create_or_find_customer(payload: Dict[str, Any], db=Depends(get_db)):
 
     customer = await find_or_create_customer(parsed, db)
 
-    return {
-        "success": True,
-        "customer": customer
-    }
+    return {"success": True, "customer": customer}
 
 
 # =========================================
 # 🟢 UPDATE CUSTOMER
 # =========================================
 
+
 @router.put("/{customer_id}")
-async def update_customer(customer_id: str, payload: Dict[str, Any], db=Depends(get_db)):
+async def update_customer(
+    customer_id: str, payload: Dict[str, Any], db=Depends(get_db)
+):
     existing = await db.customers.find_one({"_id": customer_id})
 
     if not existing:
@@ -122,30 +117,21 @@ async def update_customer(customer_id: str, payload: Dict[str, Any], db=Depends(
     # 🔁 merge logic
     updated = merge_customer(existing, updates)
 
-    await db.customers.update_one(
-        {"_id": customer_id},
-        {"$set": updated}
-    )
+    await db.customers.update_one({"_id": customer_id}, {"$set": updated})
 
-    return {
-        "success": True,
-        "customer": updated
-    }
+    return {"success": True, "customer": updated}
 
 
 # =========================================
 # 🟢 GET CUSTOMER ORDERS
 # =========================================
 
+
 @router.get("/{customer_id}/orders")
-async def get_customer_orders(
-    customer_id: str,
-    limit: int = 50,
-    db=Depends(get_db)
-):
-    cursor = db.orders.find(
-        {"customer_id": customer_id}
-    ).sort("created_at", -1).limit(limit)
+async def get_customer_orders(customer_id: str, limit: int = 50, db=Depends(get_db)):
+    cursor = (
+        db.orders.find({"customer_id": customer_id}).sort("created_at", -1).limit(limit)
+    )
 
     orders = []
     async for doc in cursor:
@@ -157,6 +143,7 @@ async def get_customer_orders(
 # =========================================
 # 🟢 MERGE CUSTOMERS (CRITICAL FEATURE 🔥)
 # =========================================
+
 
 @router.post("/merge")
 async def merge_customers(payload: Dict[str, Any], db=Depends(get_db)):
@@ -184,15 +171,11 @@ async def merge_customers(payload: Dict[str, Any], db=Depends(get_db)):
     result = merge_customer(target, source)
 
     # 🟢 تحديث الهدف
-    await db.customers.update_one(
-        {"_id": target_id},
-        {"$set": result}
-    )
+    await db.customers.update_one({"_id": target_id}, {"$set": result})
 
     # 🟢 نقل الطلبات
     await db.orders.update_many(
-        {"customer_id": source_id},
-        {"$set": {"customer_id": target_id}}
+        {"customer_id": source_id}, {"$set": {"customer_id": target_id}}
     )
 
     # 🗑️ حذف المصدر
@@ -204,12 +187,14 @@ async def merge_customers(payload: Dict[str, Any], db=Depends(get_db)):
         "merged_into": target_id,
         "merged_customer": result,
         "source_deleted": source_id,
-        "updated_orders": True
+        "updated_orders": True,
     }
+
 
 # =========================================
 # 🟢 DELETE CUSTOMER
 # =========================================
+
 
 @router.delete("/{customer_id}")
 async def delete_customer(customer_id: str, db=Depends(get_db)):
